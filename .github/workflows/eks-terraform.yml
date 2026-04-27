@@ -197,7 +197,7 @@ jobs:
             echo ""
             echo "Your current cluster name in this Terraform is:"
             echo ""
-            echo "\`eksprod\`"
+            echo "\`arealis-zord-eks\`"
             echo ""
             echo "Your current region in this Terraform is:"
             echo ""
@@ -206,7 +206,7 @@ jobs:
             echo "Update kubeconfig:"
             echo ""
             echo "\`\`\`bash"
-            echo "aws eks update-kubeconfig --region us-east-1 --name eksprod"
+            echo "aws eks update-kubeconfig --region us-east-1 --name arealis-zord-eks"
             echo "\`\`\`"
             echo ""
             echo "Check nodes:"
@@ -243,7 +243,7 @@ jobs:
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
 
-          export CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "eksprod")
+          export CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "arealis-zord-eks")
           export AWS_REGION="${{ env.AWS_REGION_VALUE }}"
 
           bash ./uninstall-helm.sh
@@ -252,7 +252,7 @@ jobs:
       - name: Pre-Destroy Kubernetes Cleanup
         if: github.event.inputs.action == 'destroy'
         run: |
-          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "eksprod")
+          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "arealis-zord-eks")
 
           if ! aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${{ env.AWS_REGION_VALUE }}" >/dev/null 2>&1; then
             echo "Cluster ${CLUSTER_NAME} not found. Skipping Kubernetes cleanup."

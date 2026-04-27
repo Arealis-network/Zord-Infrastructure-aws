@@ -24,12 +24,17 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  cluster_name        = "eksprod"
+  cluster_name        = "arealis-zord-eks"
   admin_principal_arn = var.eks_admin_principal_arn != "" ? var.eks_admin_principal_arn : data.aws_caller_identity.current.arn
+  vpc_name_prefix     = "Arealis zord vpc"
+  eks_name_prefix     = "Arealis zord eks"
+  vpc_resource_prefix = "arealis-zord-vpc"
+  eks_resource_prefix = "arealis-zord-eks"
+  node_group_name     = "arealis-zord-eks-node-group"
 
   common_tags = {
     Environment = "dev"
-    Project     = "eks-project"
+    Project     = "arealis-zord-eks"
     Owner       = "yaswanth"
     ManagedBy   = "Terraform"
     Cluster     = local.cluster_name
@@ -47,7 +52,7 @@ resource "aws_vpc" "eks_vpc" {
   enable_dns_hostnames = true
 
   tags = {
-    Name = "eks-vpc"
+    Name = local.vpc_name_prefix
   }
 }
 
@@ -56,7 +61,7 @@ resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.eks_vpc.id
 
   tags = {
-    Name = "eks-igw"
+    Name = "${local.vpc_name_prefix} igw"
   }
 }
 
@@ -72,7 +77,7 @@ resource "aws_subnet" "public1" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name                     = "eks-public-subnet-1"
+    Name                     = "${local.vpc_name_prefix} public subnet 1"
     "kubernetes.io/role/elb" = "1"
   }
 }
@@ -85,7 +90,7 @@ resource "aws_subnet" "public2" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name                     = "eks-public-subnet-2"
+    Name                     = "${local.vpc_name_prefix} public subnet 2"
     "kubernetes.io/role/elb" = "1"
   }
 }
@@ -97,7 +102,7 @@ resource "aws_subnet" "private1" {
   availability_zone = "us-east-1a"
 
   tags = {
-    Name                              = "eks-private-subnet-1"
+    Name                              = "${local.vpc_name_prefix} private subnet 1"
     "kubernetes.io/role/internal-elb" = "1"
   }
 }
@@ -109,7 +114,7 @@ resource "aws_subnet" "private2" {
   availability_zone = "us-east-1b"
 
   tags = {
-    Name                              = "eks-private-subnet-2"
+    Name                              = "${local.vpc_name_prefix} private subnet 2"
     "kubernetes.io/role/internal-elb" = "1"
   }
 }
@@ -122,7 +127,7 @@ resource "aws_eip" "nat" {
   domain = "vpc"
 
   tags = {
-    Name = "eks-nat-eip"
+    Name = "${local.vpc_name_prefix} nat eip"
   }
 }
 
@@ -132,7 +137,7 @@ resource "aws_nat_gateway" "nat" {
   subnet_id     = aws_subnet.public1.id
 
   tags = {
-    Name = "eks-nat-gateway"
+    Name = "${local.vpc_name_prefix} nat gateway"
   }
 }
 
@@ -150,7 +155,7 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name = "eks-public-route-table"
+    Name = "${local.vpc_name_prefix} public route table"
   }
 }
 
@@ -176,7 +181,7 @@ resource "aws_route_table" "private" {
   }
 
   tags = {
-    Name = "eks-private-route-table"
+    Name = "${local.vpc_name_prefix} private route table"
   }
 }
 
@@ -194,7 +199,7 @@ resource "aws_route_table_association" "priv2" {
 
 resource "aws_security_group" "allow_all" {
 
-  name        = "allow-all-sg"
+  name        = "${local.vpc_resource_prefix}-allow-all-sg"
   description = "Allow all inbound and outbound traffic"
   vpc_id      = aws_vpc.eks_vpc.id
 
@@ -219,7 +224,7 @@ resource "aws_security_group" "allow_all" {
   }
 
   tags = {
-    Name = "allow-all-sg"
+    Name = "${local.vpc_name_prefix} allow all sg"
   }
 }
 ############################
@@ -228,7 +233,7 @@ resource "aws_security_group" "allow_all" {
 
 resource "aws_iam_role" "cluster_role" {
 
-  name = "eks-cluster-role"
+  name = "${local.eks_resource_prefix}-cluster-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -242,7 +247,7 @@ resource "aws_iam_role" "cluster_role" {
   })
 
   tags = {
-    Name = "eks-cluster-role"
+    Name = "${local.eks_name_prefix} cluster role"
   }
 }
 
@@ -258,7 +263,7 @@ resource "aws_iam_role_policy_attachment" "cluster_policy" {
 
 resource "aws_iam_role" "worker_role" {
 
-  name = "eks-worker-role"
+  name = "${local.eks_resource_prefix}-worker-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -272,7 +277,7 @@ resource "aws_iam_role" "worker_role" {
   })
 
   tags = {
-    Name = "eks-worker-role"
+    Name = "${local.eks_name_prefix} worker role"
   }
 }
 
@@ -336,7 +341,7 @@ resource "aws_eks_cluster" "eks" {
   ]
 
   tags = {
-    Name = "eks-cluster"
+    Name = "${local.eks_name_prefix} cluster"
   }
 }
 
@@ -359,7 +364,7 @@ resource "aws_iam_openid_connect_provider" "eks" {
   depends_on = [aws_eks_cluster.eks]
 
   tags = {
-    Name = "eks-oidc-provider"
+    Name = "${local.eks_name_prefix} oidc provider"
   }
 }
 
@@ -375,7 +380,7 @@ resource "aws_eks_access_entry" "cluster_admin" {
   type          = "STANDARD"
 
   tags = {
-    Name = "eks-cluster-admin-access-entry"
+    Name = "${local.eks_name_prefix} cluster admin access entry"
   }
 }
 
@@ -417,7 +422,7 @@ data "aws_eks_cluster_auth" "eks" {
 
 resource "aws_launch_template" "node_group" {
 
-  name_prefix            = "eks-node-group-"
+  name_prefix            = "${local.node_group_name}-"
   update_default_version = true
 
   metadata_options {
@@ -430,7 +435,7 @@ resource "aws_launch_template" "node_group" {
     resource_type = "instance"
 
     tags = {
-      Name = "eks-cluster-node"
+      Name = "${local.eks_name_prefix} cluster node"
     }
   }
 
@@ -438,19 +443,19 @@ resource "aws_launch_template" "node_group" {
     resource_type = "volume"
 
     tags = {
-      Name = "eks-cluster-node-volume"
+      Name = "${local.eks_name_prefix} cluster node volume"
     }
   }
 
   tags = {
-    Name = "eks-node-launch-template"
+    Name = "${local.eks_name_prefix} node launch template"
   }
 }
 
 resource "aws_eks_node_group" "node_group" {
 
   cluster_name    = aws_eks_cluster.eks.name
-  node_group_name = "eks-node-group"
+  node_group_name = local.node_group_name
 
   node_role_arn = aws_iam_role.worker_role.arn
   version       = var.cluster_version
@@ -481,7 +486,7 @@ resource "aws_eks_node_group" "node_group" {
     aws_iam_role_policy_attachment.ecr
   ]
   tags = {
-    Name = "eks-node-group"
+    Name = "${local.eks_name_prefix} node group"
   }
 }
 
@@ -491,7 +496,7 @@ resource "aws_autoscaling_group_tag" "node_instance_name" {
 
   tag {
     key                 = "Name"
-    value               = "eks-cluster-node"
+    value               = "${local.eks_name_prefix} cluster node"
     propagate_at_launch = true
   }
 }
@@ -524,7 +529,7 @@ resource "aws_autoscaling_group_tag" "cluster_autoscaler_enabled" {
 
 resource "aws_iam_role" "ec2_admin_role" {
 
-  name = "eks-ec2-admin-role"
+  name = "${local.eks_resource_prefix}-ec2-admin-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -538,7 +543,7 @@ resource "aws_iam_role" "ec2_admin_role" {
   })
 
   tags = {
-    Name = "eks-ec2-admin-role"
+    Name = "${local.eks_name_prefix} ec2 admin role"
   }
 }
 
@@ -550,11 +555,11 @@ resource "aws_iam_role_policy_attachment" "ec2_admin_access" {
 
 resource "aws_iam_instance_profile" "ec2_admin_profile" {
 
-  name = "eks-ec2-admin-profile"
+  name = "${local.eks_resource_prefix}-ec2-admin-profile"
   role = aws_iam_role.ec2_admin_role.name
 
   tags = {
-    Name = "eks-ec2-admin-profile"
+    Name = "${local.eks_name_prefix} ec2 admin profile"
   }
 }
 
@@ -564,7 +569,7 @@ resource "aws_eks_access_entry" "ec2_admin_role" {
   type          = "STANDARD"
 
   tags = {
-    Name = "eks-ec2-admin-access-entry"
+    Name = "${local.eks_name_prefix} ec2 admin access entry"
   }
 }
 
@@ -595,7 +600,7 @@ resource "aws_instance" "eks" {
 
 
   tags = {
-    Name = "eks"
+    Name = "${local.eks_name_prefix} admin instance"
   }
 
   user_data = file("${path.module}/tool.sh")
@@ -648,7 +653,7 @@ resource "aws_eks_addon" "pod_identity" {
 
 resource "aws_iam_role" "ebs_csi_role" {
 
-  name = "AmazonEKS_EBS_CSI_DriverRole"
+  name = "${local.eks_resource_prefix}-ebs-csi-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -665,7 +670,7 @@ resource "aws_iam_role" "ebs_csi_role" {
   })
 
   tags = {
-    Name = "eks-ebs-csi-role"
+    Name = "${local.eks_name_prefix} ebs csi role"
   }
 }
 
@@ -705,7 +710,7 @@ resource "aws_eks_addon" "ebs_csi" {
 
 resource "aws_iam_policy" "cluster_autoscaler" {
 
-  name        = "AmazonEKSClusterAutoscalerPolicy"
+  name        = "${local.eks_resource_prefix}-cluster-autoscaler-policy"
   description = "Allows Cluster Autoscaler to manage Auto Scaling Groups"
 
   policy = jsonencode({
@@ -739,13 +744,13 @@ resource "aws_iam_policy" "cluster_autoscaler" {
   })
 
   tags = {
-    Name = "eks-cluster-autoscaler-policy"
+    Name = "${local.eks_name_prefix} cluster autoscaler policy"
   }
 }
 
 resource "aws_iam_role" "cluster_autoscaler_role" {
 
-  name = "AmazonEKSClusterAutoscalerRole"
+  name = "${local.eks_resource_prefix}-cluster-autoscaler-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -762,7 +767,7 @@ resource "aws_iam_role" "cluster_autoscaler_role" {
   })
 
   tags = {
-    Name = "eks-cluster-autoscaler-role"
+    Name = "${local.eks_name_prefix} cluster autoscaler role"
   }
 }
 

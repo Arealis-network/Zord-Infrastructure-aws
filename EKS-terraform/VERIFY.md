@@ -5,7 +5,7 @@ Use this checklist after `terraform apply` finishes. These commands verify that 
 ## 1) Configure kubectl
 
 ```bash
-aws eks update-kubeconfig --region us-east-1 --name eksprod
+aws eks update-kubeconfig --region us-east-1 --name arealis-zord-eks
 ```
 
 ## 2) Basic Cluster Health
@@ -69,8 +69,8 @@ Expected:
 ## 7) Node Group Verification (AWS)
 
 ```bash
-aws eks list-nodegroups --cluster-name eksprod --region us-east-1
-aws eks describe-nodegroup --cluster-name eksprod --nodegroup-name eks-node-group --region us-east-1
+aws eks list-nodegroups --cluster-name arealis-zord-eks --region us-east-1
+aws eks describe-nodegroup --cluster-name arealis-zord-eks --nodegroup-name arealis-zord-eks-node-group --region us-east-1
 ```
 
 Expected:

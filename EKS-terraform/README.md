@@ -199,7 +199,7 @@ terraform destroy
 
 Your current cluster name in this Terraform is:
 
-`eksprod`
+`arealis-zord-eks`
 
 Your current region in this Terraform is:
 
@@ -208,7 +208,7 @@ Your current region in this Terraform is:
 Update kubeconfig:
 
 ```bash
-aws eks update-kubeconfig --region us-east-1 --name eksprod
+aws eks update-kubeconfig --region us-east-1 --name arealis-zord-eks
 ```
 
 Check nodes:
@@ -240,13 +240,13 @@ helm list -A
 Describe cluster:
 
 ```bash
-aws eks describe-cluster --name eksprod --region us-east-1
+aws eks describe-cluster --name arealis-zord-eks --region us-east-1
 ```
 
 List node groups:
 
 ```bash
-aws eks list-nodegroups --cluster-name eksprod --region us-east-1
+aws eks list-nodegroups --cluster-name arealis-zord-eks --region us-east-1
 ```
 
 Check autoscaler pod:
