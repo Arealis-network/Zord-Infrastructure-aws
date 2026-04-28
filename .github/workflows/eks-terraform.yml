@@ -51,7 +51,7 @@ env:
   TF_INPUT: "false"
   TF_WORKING_DIR: "EKS-terraform"
   TF_STATE_KEY: "eks/terraform.tfstate"
-  AWS_REGION_VALUE: "us-east-1"
+  AWS_REGION_VALUE: "ap-south-1"
 
 jobs:
   # This job runs automatically for pull requests and only performs validation and plan.
