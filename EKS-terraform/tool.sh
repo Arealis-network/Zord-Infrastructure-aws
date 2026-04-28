@@ -1,4 +1,6 @@
 #!/bin/bash
+set -euo pipefail
+
 # Update system
 yum update -y
 
@@ -51,12 +53,64 @@ rm -rf awscliv2.zip aws
 sudo yum install -y docker
 sudo systemctl enable docker
 sudo systemctl start docker
+sudo usermod -aG docker ec2-user || true
 docker --version || true
 
 # Install Git
 sudo yum install -y git
 git --version || true
 
+# ----------------------------- Install Jenkins ------------------------------
+sudo docker volume create jenkins_home
+sudo docker rm -f jenkins >/dev/null 2>&1 || true
+sudo docker pull jenkins/jenkins:lts-jdk21
+sudo docker run -d \
+  --name jenkins \
+  --restart unless-stopped \
+  -p 7777:8080 \
+  -p 50000:50000 \
+  -v jenkins_home:/var/jenkins_home \
+  jenkins/jenkins:lts-jdk21
+
+# Wait for Jenkins to create the initial admin password inside the container.
+for i in {1..30}; do
+  if sudo docker exec jenkins test -f /var/jenkins_home/secrets/initialAdminPassword; then
+    break
+  fi
+  sleep 10
+done
+
+if sudo docker exec jenkins test -f /var/jenkins_home/secrets/initialAdminPassword; then
+  sudo docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword > /home/ec2-user/jenkins-initial-admin-password
+  sudo chown ec2-user:ec2-user /home/ec2-user/jenkins-initial-admin-password
+fi
+
+# ----------------------------- Install SonarQube ---------------------------
+sudo tee /etc/sysctl.d/99-sonarqube.conf > /dev/null <<'EOF'
+vm.max_map_count=524288
+fs.file-max=131072
+EOF
+sudo sysctl --system || true
+
+sudo docker volume create sonarqube_data
+sudo docker volume create sonarqube_logs
+sudo docker volume create sonarqube_extensions
+sudo docker rm -f sonarqube >/dev/null 2>&1 || true
+sudo docker pull sonarqube:lts-community
+sudo docker run -d \
+  --name sonarqube \
+  --restart unless-stopped \
+  -p 9000:9000 \
+  -v sonarqube_data:/opt/sonarqube/data \
+  -v sonarqube_logs:/opt/sonarqube/logs \
+  -v sonarqube_extensions:/opt/sonarqube/extensions \
+  sonarqube:lts-community
+
+sudo docker ps || true
+echo "Jenkins Docker container is configured on port 7777"
+echo "Initial admin password file: /home/ec2-user/jenkins-initial-admin-password"
+echo "SonarQube Docker container is configured on port 9000"
+echo "SonarQube default login: admin / admin"
 
 helm repo add autoscaler https://kubernetes.github.io/autoscaler
 helm repo update

@@ -26,8 +26,8 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
-data "aws_ssm_parameter" "amazon_linux_2_ami" {
-  name = "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+data "aws_ssm_parameter" "amazon_linux_2023_ami" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
 locals {
@@ -597,7 +597,7 @@ resource "aws_eks_access_policy_association" "ec2_admin_role" {
 
 
 resource "aws_instance" "eks" {
-  ami                    = data.aws_ssm_parameter.amazon_linux_2_ami.value
+  ami                    = data.aws_ssm_parameter.amazon_linux_2023_ami.value
   instance_type          = "t2.medium"
   subnet_id              = aws_subnet.public1.id
   iam_instance_profile   = aws_iam_instance_profile.ec2_admin_profile.name
