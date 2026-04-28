@@ -52,7 +52,7 @@ Add these repository secrets:
 
 3. `AWS_REGION`
    Example:
-   `us-east-1`
+   `ap-south-1`
 
 4. `TF_STATE_BUCKET`
    The S3 bucket name used to store Terraform state
@@ -64,7 +64,7 @@ Use a globally unique bucket name.
 Example:
 
 ```bash
-aws s3api create-bucket --bucket my-eks-terraform-state-bucket --region us-east-1
+aws s3api create-bucket --bucket my-eks-terraform-state-bucket --region ap-south-1
 ```
 
 Enable versioning:
@@ -167,7 +167,7 @@ Run init:
 terraform init \
   -backend-config="bucket=my-eks-terraform-state-bucket" \
   -backend-config="key=eks/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
+  -backend-config="region=ap-south-1" \
   -backend-config="encrypt=true"
 ```
 
@@ -203,12 +203,12 @@ Your current cluster name in this Terraform is:
 
 Your current region in this Terraform is:
 
-`us-east-1`
+`ap-south-1`
 
 Update kubeconfig:
 
 ```bash
-aws eks update-kubeconfig --region us-east-1 --name arealis-zord-eks
+aws eks update-kubeconfig --region ap-south-1 --name arealis-zord-eks
 ```
 
 Check nodes:
@@ -240,13 +240,13 @@ helm list -A
 Describe cluster:
 
 ```bash
-aws eks describe-cluster --name arealis-zord-eks --region us-east-1
+aws eks describe-cluster --name arealis-zord-eks --region ap-south-1
 ```
 
 List node groups:
 
 ```bash
-aws eks list-nodegroups --cluster-name arealis-zord-eks --region us-east-1
+aws eks list-nodegroups --cluster-name arealis-zord-eks --region ap-south-1
 ```
 
 Check autoscaler pod:

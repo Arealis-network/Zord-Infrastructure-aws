@@ -8,6 +8,12 @@ variable "cluster_version" {
   default     = "1.35"
 }
 
+variable "aws_region" {
+  description = "AWS region where the EKS infrastructure will be created."
+  type        = string
+  default     = "ap-south-1"
+}
+
 variable "eks_admin_principal_arn" {
   description = "IAM principal ARN that should receive EKS cluster admin access. Leave empty to use the currently authenticated AWS principal."
   type        = string

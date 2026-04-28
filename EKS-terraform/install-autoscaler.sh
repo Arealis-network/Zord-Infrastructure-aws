@@ -10,6 +10,16 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 echo "Configuring kubectl for cluster: ${CLUSTER_NAME}"
+if ! aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+  echo "Cluster ${CLUSTER_NAME} was not found in region ${AWS_REGION}."
+  echo "Clusters currently visible in this account and region:"
+  aws eks list-clusters --region "${AWS_REGION}" || true
+  exit 1
+fi
+
+echo "Waiting for cluster to become ACTIVE..."
+aws eks wait cluster-active --name "${CLUSTER_NAME}" --region "${AWS_REGION}"
+
 aws eks update-kubeconfig --region "${AWS_REGION}" --name "${CLUSTER_NAME}"
 
 echo "Waiting for all nodes to be Ready..."

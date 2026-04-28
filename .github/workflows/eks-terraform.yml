@@ -51,7 +51,7 @@ env:
   TF_INPUT: "false"
   TF_WORKING_DIR: "EKS-terraform"
   TF_STATE_KEY: "eks/terraform.tfstate"
-  AWS_REGION_VALUE: "us-east-1"
+  AWS_REGION_VALUE: "ap-south-1"
 
 jobs:
   # This job runs automatically for pull requests and only performs validation and plan.
@@ -167,6 +167,21 @@ jobs:
         if: github.event.inputs.action == 'apply'
         run: terraform apply -auto-approve -no-color
 
+      - name: Verify EKS Cluster Exists
+        if: github.event.inputs.action == 'apply'
+        run: |
+          CLUSTER_NAME=$(terraform output -raw cluster_name)
+          echo "Expected cluster from Terraform output: ${CLUSTER_NAME}"
+
+          if ! aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${{ env.AWS_REGION_VALUE }}" >/dev/null 2>&1; then
+            echo "Cluster ${CLUSTER_NAME} was not found in region ${{ env.AWS_REGION_VALUE }}."
+            echo "Clusters currently visible in this account and region:"
+            aws eks list-clusters --region "${{ env.AWS_REGION_VALUE }}" || true
+            exit 1
+          fi
+
+          aws eks wait cluster-active --name "${CLUSTER_NAME}" --region "${{ env.AWS_REGION_VALUE }}"
+
       - name: Install Cluster Autoscaler
         if: github.event.inputs.action == 'apply'
         run: |
@@ -201,12 +216,12 @@ jobs:
             echo ""
             echo "Your current region in this Terraform is:"
             echo ""
-            echo "\`us-east-1\`"
+            echo "\`ap-south-1\`"
             echo ""
             echo "Update kubeconfig:"
             echo ""
             echo "\`\`\`bash"
-            echo "aws eks update-kubeconfig --region us-east-1 --name arealis-zord-eks"
+            echo "aws eks update-kubeconfig --region ap-south-1 --name arealis-zord-eks"
             echo "\`\`\`"
             echo ""
             echo "Check nodes:"

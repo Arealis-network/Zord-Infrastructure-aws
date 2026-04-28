@@ -14,7 +14,7 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
 
   default_tags {
     tags = local.common_tags
@@ -22,6 +22,13 @@ provider "aws" {
 }
 
 data "aws_caller_identity" "current" {}
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+data "aws_ssm_parameter" "amazon_linux_2_ami" {
+  name = "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+}
 
 locals {
   cluster_name        = "arealis-zord-eks"
@@ -31,6 +38,7 @@ locals {
   vpc_resource_prefix = "arealis-zord-vpc"
   eks_resource_prefix = "arealis-zord-eks"
   node_group_name     = "arealis-zord-eks-node-group"
+  availability_zones  = slice(data.aws_availability_zones.available.names, 0, 2)
 
   common_tags = {
     Environment = "dev"
@@ -73,7 +81,7 @@ resource "aws_subnet" "public1" {
 
   vpc_id                  = aws_vpc.eks_vpc.id
   cidr_block              = "10.0.1.0/24"
-  availability_zone       = "us-east-1a"
+  availability_zone       = local.availability_zones[0]
   map_public_ip_on_launch = true
 
   tags = {
@@ -86,7 +94,7 @@ resource "aws_subnet" "public2" {
 
   vpc_id                  = aws_vpc.eks_vpc.id
   cidr_block              = "10.0.2.0/24"
-  availability_zone       = "us-east-1b"
+  availability_zone       = local.availability_zones[1]
   map_public_ip_on_launch = true
 
   tags = {
@@ -99,7 +107,7 @@ resource "aws_subnet" "private1" {
 
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = "10.0.3.0/24"
-  availability_zone = "us-east-1a"
+  availability_zone = local.availability_zones[0]
 
   tags = {
     Name                              = "${local.vpc_name_prefix} private subnet 1"
@@ -111,7 +119,7 @@ resource "aws_subnet" "private2" {
 
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = "10.0.4.0/24"
-  availability_zone = "us-east-1b"
+  availability_zone = local.availability_zones[1]
 
   tags = {
     Name                              = "${local.vpc_name_prefix} private subnet 2"
@@ -589,7 +597,7 @@ resource "aws_eks_access_policy_association" "ec2_admin_role" {
 
 
 resource "aws_instance" "eks" {
-  ami                    = "ami-02dfbd4ff395f2a1b"
+  ami                    = data.aws_ssm_parameter.amazon_linux_2_ami.value
   instance_type          = "t2.medium"
   subnet_id              = aws_subnet.public1.id
   iam_instance_profile   = aws_iam_instance_profile.ec2_admin_profile.name
