@@ -84,7 +84,7 @@ if sudo docker exec jenkins test -f /var/jenkins_home/secrets/initialAdminPasswo
   sudo docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword > /home/ec2-user/jenkins-initial-admin-password
   sudo chown ec2-user:ec2-user /home/ec2-user/jenkins-initial-admin-password
 fi
-
+sudo docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 # ----------------------------- Install SonarQube ---------------------------
 sudo tee /etc/sysctl.d/99-sonarqube.conf > /dev/null <<'EOF'
 vm.max_map_count=524288
