@@ -597,11 +597,12 @@ resource "aws_eks_access_policy_association" "ec2_admin_role" {
 
 
 resource "aws_instance" "eks" {
-  ami                    = data.aws_ssm_parameter.amazon_linux_2023_ami.value
-  instance_type          = "t2.medium"
-  subnet_id              = aws_subnet.public1.id
-  iam_instance_profile   = aws_iam_instance_profile.ec2_admin_profile.name
-  vpc_security_group_ids = [aws_security_group.allow_all.id]
+  ami                         = data.aws_ssm_parameter.amazon_linux_2023_ami.value
+  instance_type               = "t2.medium"
+  subnet_id                   = aws_subnet.public1.id
+  iam_instance_profile        = aws_iam_instance_profile.ec2_admin_profile.name
+  vpc_security_group_ids      = [aws_security_group.allow_all.id]
+  user_data_replace_on_change = true
   root_block_device {
     volume_size = "30"
   }
