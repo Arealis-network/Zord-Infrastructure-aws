@@ -4,6 +4,10 @@ set -euo pipefail
 exec > >(tee /var/log/tool-bootstrap.log | logger -t tool-bootstrap -s 2>/dev/console) 2>&1
 trap 'echo "Bootstrap failed at line ${LINENO}: ${BASH_COMMAND}"' ERR
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JENKINS_IMAGE_NAME="arealis-jenkins:lts-tools"
+JENKINS_DOCKERFILE_TMP="/tmp/arealis-jenkins.Dockerfile"
+
 WARNINGS=()
 
 warn() {
@@ -122,6 +126,26 @@ docker --version
 docker volume create jenkins_home
 docker rm -f jenkins >/dev/null 2>&1 || true
 
+echo "Building custom Jenkins image with AWS CLI, Docker CLI, and Git"
+cat > "${JENKINS_DOCKERFILE_TMP}" <<'EOF'
+FROM jenkins/jenkins:lts
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        awscli \
+        docker.io \
+        git \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+USER jenkins
+EOF
+
+docker build -t "${JENKINS_IMAGE_NAME}" -f "${JENKINS_DOCKERFILE_TMP}" /tmp
+rm -f "${JENKINS_DOCKERFILE_TMP}"
+
 if docker run -d \
   --name jenkins \
   --restart unless-stopped \
@@ -129,7 +153,7 @@ if docker run -d \
   -p 50000:50000 \
   -v jenkins_home:/var/jenkins_home \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  jenkins/jenkins:lts; then
+  "${JENKINS_IMAGE_NAME}"; then
   echo "Waiting for Jenkins initial admin password"
 
   if wait_for_container_file "jenkins" "/var/jenkins_home/secrets/initialAdminPassword" 30 10; then
