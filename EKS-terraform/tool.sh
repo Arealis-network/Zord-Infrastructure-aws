@@ -138,6 +138,9 @@ RUN apt-get update \
         docker.io \
         git \
         unzip \
+    && docker --version \
+    && aws --version \
+    && git --version \
     && rm -rf /var/lib/apt/lists/*
 
 USER jenkins
