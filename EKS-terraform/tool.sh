@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JENKINS_IMAGE_NAME="arealis-jenkins:lts-tools"
 JENKINS_DOCKERFILE_TMP="/tmp/arealis-jenkins.Dockerfile"
 JENKINS_IMAGE_TO_RUN="jenkins/jenkins:lts"
-HOST_DOCKER_VERSION=""
 
 WARNINGS=()
 
@@ -16,6 +15,32 @@ warn() {
   local message="$1"
   WARNINGS+=("${message}")
   echo "WARNING: ${message}"
+}
+
+install_jenkins_docker_cli() {
+  docker exec -u 0 jenkins bash -lc '
+    set -euo pipefail
+
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+
+    . /etc/os-release
+    cat > /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/debian
+Suites: ${VERSION_CODENAME}
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+    apt-get update
+    apt-get install -y --no-install-recommends docker-ce-cli
+    rm -rf /var/lib/apt/lists/*
+  '
 }
 
 ensure_jenkins_cli_tools() {
@@ -26,28 +51,18 @@ ensure_jenkins_cli_tools() {
 
   echo "Installing docker, aws, and git inside the running Jenkins container"
 
-  if docker exec -u 0 jenkins bash -lc '
+  docker exec -u 0 jenkins bash -lc '
     set -e
     apt-get update
     apt-get install -y --no-install-recommends awscli git unzip ca-certificates curl
     rm -rf /var/lib/apt/lists/*
-  '; then
-    if docker exec jenkins sh -lc 'command -v docker >/dev/null 2>&1'; then
-      docker exec jenkins sh -lc 'docker --version && aws --version && git --version'
-      return 0
-    fi
+  ' || true
 
-    if [[ -n "${HOST_DOCKER_VERSION}" ]] && docker exec -u 0 -e HOST_DOCKER_VERSION="${HOST_DOCKER_VERSION}" jenkins bash -lc '
-      set -e
-      cd /tmp
-      curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${HOST_DOCKER_VERSION}.tgz" -o docker.tgz
-      tar -xzf docker.tgz
-      install -m 0755 docker/docker /usr/local/bin/docker
-      rm -rf /tmp/docker /tmp/docker.tgz
-    '; then
-      docker exec jenkins sh -lc 'docker --version && aws --version && git --version'
-      return 0
-    fi
+  install_jenkins_docker_cli || true
+
+  if docker exec jenkins sh -lc 'command -v docker >/dev/null 2>&1 && command -v aws >/dev/null 2>&1 && command -v git >/dev/null 2>&1'; then
+    docker exec jenkins sh -lc 'docker --version && aws --version && git --version'
+    return 0
   fi
 
   return 1
@@ -157,7 +172,6 @@ systemctl enable --now docker
 usermod -aG docker ec2-user || true
 chmod 666 /var/run/docker.sock
 docker --version
-HOST_DOCKER_VERSION="$(docker version --format '{{.Client.Version}}')"
 
 #----------------------------- Install Jenkins -----------------------------
 
@@ -168,8 +182,6 @@ echo "Building custom Jenkins image with AWS CLI, Docker CLI, and Git"
 cat > "${JENKINS_DOCKERFILE_TMP}" <<'EOF'
 FROM jenkins/jenkins:lts
 
-ARG HOST_DOCKER_VERSION
-
 USER root
 
 RUN apt-get update \
@@ -179,10 +191,13 @@ RUN apt-get update \
         curl \
         git \
         unzip \
-    && curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${HOST_DOCKER_VERSION}.tgz" -o /tmp/docker.tgz \
-    && tar -xzf /tmp/docker.tgz -C /tmp \
-    && install -m 0755 /tmp/docker/docker /usr/local/bin/docker \
-    && rm -rf /tmp/docker /tmp/docker.tgz \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && . /etc/os-release \
+    && printf 'Types: deb\nURIs: https://download.docker.com/linux/debian\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' "$VERSION_CODENAME" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
     && docker --version \
     && aws --version \
     && git --version \
@@ -192,7 +207,6 @@ USER jenkins
 EOF
 
 if docker build \
-  --build-arg HOST_DOCKER_VERSION="${HOST_DOCKER_VERSION}" \
   -t "${JENKINS_IMAGE_NAME}" \
   -f "${JENKINS_DOCKERFILE_TMP}" \
   /tmp; then
