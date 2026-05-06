@@ -7,6 +7,7 @@ trap 'echo "Bootstrap failed at line ${LINENO}: ${BASH_COMMAND}"' ERR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JENKINS_IMAGE_NAME="arealis-jenkins:lts-tools"
 JENKINS_DOCKERFILE_TMP="/tmp/arealis-jenkins.Dockerfile"
+JENKINS_IMAGE_TO_RUN="jenkins/jenkins:lts"
 
 WARNINGS=()
 
@@ -14,6 +15,27 @@ warn() {
   local message="$1"
   WARNINGS+=("${message}")
   echo "WARNING: ${message}"
+}
+
+ensure_jenkins_cli_tools() {
+  if docker exec jenkins sh -lc 'command -v docker >/dev/null 2>&1 && command -v aws >/dev/null 2>&1 && command -v git >/dev/null 2>&1'; then
+    echo "Jenkins container already has docker, aws, and git installed"
+    return 0
+  fi
+
+  echo "Installing docker, aws, and git inside the running Jenkins container"
+
+  if docker exec -u 0 jenkins bash -lc '
+    set -e
+    apt-get update
+    apt-get install -y --no-install-recommends awscli docker.io git unzip
+    rm -rf /var/lib/apt/lists/*
+  '; then
+    docker exec jenkins sh -lc 'docker --version && aws --version && git --version'
+    return 0
+  fi
+
+  return 1
 }
 
 is_container_running() {
@@ -146,7 +168,11 @@ RUN apt-get update \
 USER jenkins
 EOF
 
-docker build -t "${JENKINS_IMAGE_NAME}" -f "${JENKINS_DOCKERFILE_TMP}" /tmp
+if docker build -t "${JENKINS_IMAGE_NAME}" -f "${JENKINS_DOCKERFILE_TMP}" /tmp; then
+  JENKINS_IMAGE_TO_RUN="${JENKINS_IMAGE_NAME}"
+else
+  warn "Custom Jenkins image build failed. Falling back to jenkins/jenkins:lts."
+fi
 rm -f "${JENKINS_DOCKERFILE_TMP}"
 
 if docker run -d \
@@ -156,7 +182,12 @@ if docker run -d \
   -p 50000:50000 \
   -v jenkins_home:/var/jenkins_home \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  "${JENKINS_IMAGE_NAME}"; then
+  "${JENKINS_IMAGE_TO_RUN}"; then
+  if ! ensure_jenkins_cli_tools; then
+    warn "Could not install docker, aws, and git inside the Jenkins container."
+    print_container_logs "jenkins"
+  fi
+
   echo "Waiting for Jenkins initial admin password"
 
   if wait_for_container_file "jenkins" "/var/jenkins_home/secrets/initialAdminPassword" 30 10; then
