@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JENKINS_IMAGE_NAME="arealis-jenkins:lts-tools"
 JENKINS_DOCKERFILE_TMP="/tmp/arealis-jenkins.Dockerfile"
 JENKINS_IMAGE_TO_RUN="jenkins/jenkins:lts"
+HOST_DOCKER_VERSION=""
 
 WARNINGS=()
 
@@ -28,11 +29,25 @@ ensure_jenkins_cli_tools() {
   if docker exec -u 0 jenkins bash -lc '
     set -e
     apt-get update
-    apt-get install -y --no-install-recommends awscli docker.io git unzip
+    apt-get install -y --no-install-recommends awscli git unzip ca-certificates curl
     rm -rf /var/lib/apt/lists/*
   '; then
-    docker exec jenkins sh -lc 'docker --version && aws --version && git --version'
-    return 0
+    if docker exec jenkins sh -lc 'command -v docker >/dev/null 2>&1'; then
+      docker exec jenkins sh -lc 'docker --version && aws --version && git --version'
+      return 0
+    fi
+
+    if [[ -n "${HOST_DOCKER_VERSION}" ]] && docker exec -u 0 -e HOST_DOCKER_VERSION="${HOST_DOCKER_VERSION}" jenkins bash -lc '
+      set -e
+      cd /tmp
+      curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${HOST_DOCKER_VERSION}.tgz" -o docker.tgz
+      tar -xzf docker.tgz
+      install -m 0755 docker/docker /usr/local/bin/docker
+      rm -rf /tmp/docker /tmp/docker.tgz
+    '; then
+      docker exec jenkins sh -lc 'docker --version && aws --version && git --version'
+      return 0
+    fi
   fi
 
   return 1
@@ -142,6 +157,7 @@ systemctl enable --now docker
 usermod -aG docker ec2-user || true
 chmod 666 /var/run/docker.sock
 docker --version
+HOST_DOCKER_VERSION="$(docker version --format '{{.Client.Version}}')"
 
 #----------------------------- Install Jenkins -----------------------------
 
@@ -152,14 +168,21 @@ echo "Building custom Jenkins image with AWS CLI, Docker CLI, and Git"
 cat > "${JENKINS_DOCKERFILE_TMP}" <<'EOF'
 FROM jenkins/jenkins:lts
 
+ARG HOST_DOCKER_VERSION
+
 USER root
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         awscli \
-        docker.io \
+        ca-certificates \
+        curl \
         git \
         unzip \
+    && curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${HOST_DOCKER_VERSION}.tgz" -o /tmp/docker.tgz \
+    && tar -xzf /tmp/docker.tgz -C /tmp \
+    && install -m 0755 /tmp/docker/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker /tmp/docker.tgz \
     && docker --version \
     && aws --version \
     && git --version \
@@ -168,7 +191,11 @@ RUN apt-get update \
 USER jenkins
 EOF
 
-if docker build -t "${JENKINS_IMAGE_NAME}" -f "${JENKINS_DOCKERFILE_TMP}" /tmp; then
+if docker build \
+  --build-arg HOST_DOCKER_VERSION="${HOST_DOCKER_VERSION}" \
+  -t "${JENKINS_IMAGE_NAME}" \
+  -f "${JENKINS_DOCKERFILE_TMP}" \
+  /tmp; then
   JENKINS_IMAGE_TO_RUN="${JENKINS_IMAGE_NAME}"
 else
   warn "Custom Jenkins image build failed. Falling back to jenkins/jenkins:lts."
