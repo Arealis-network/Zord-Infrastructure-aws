@@ -197,6 +197,26 @@ jobs:
 
           bash ./install-autoscaler.sh
 
+      - name: Install External Secrets Operator
+        if: github.event.inputs.action == 'apply'
+        run: |
+          if ! command -v kubectl >/dev/null 2>&1; then
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/kubectl
+          fi
+
+          if ! command -v helm >/dev/null 2>&1; then
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          fi
+
+          export CLUSTER_NAME="$(terraform output -raw cluster_name)"
+          export ESO_NAMESPACE="external-secrets"
+          export ESO_SERVICE_ACCOUNT="external-secrets"
+          export AWS_REGION="${{ env.AWS_REGION_VALUE }}"
+
+          bash ./install-external-secrets.sh
+
       - name: Cluster Connection Summary
         if: github.event.inputs.action == 'apply'
         run: |
@@ -240,6 +260,13 @@ jobs:
             echo ""
             echo "\`\`\`bash"
             echo "kubectl get svc -A"
+            echo "\`\`\`"
+            echo ""
+            echo "Check External Secrets Operator:"
+            echo ""
+            echo "\`\`\`bash"
+            echo "kubectl get pods -n external-secrets"
+            echo "kubectl get crd | grep external-secrets"
             echo "\`\`\`"
             echo ""
             echo "Check Cluster Autoscaler:"

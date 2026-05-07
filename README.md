@@ -2,6 +2,8 @@
 
 This repository provisions the AWS infrastructure for the EKS environment and boots an admin EC2 instance with Jenkins and SonarQube using Docker.
 
+It also installs External Secrets Operator automatically after a successful EKS apply.
+
 ## Deployment Method
 
 This project is primarily managed through GitHub Actions, not by running Terraform manually on your local machine.
@@ -11,6 +13,32 @@ The workflow file is:
 ```text
 /.github/workflows/eks-terraform.yml
 ```
+
+There is now a second Terraform stack for AWS Secrets Manager:
+
+```text
+/secret-manager
+```
+
+And its workflow file is:
+
+```text
+/.github/workflows/secrets-manager-terraform.yml
+```
+
+## Recommended Run Order
+
+Run the infrastructure in this order:
+
+1. `Secret Manager Terraform` with `apply`
+2. `EKS Terraform` with `apply`
+3. deploy the Kubernetes manifests from the app repository
+
+That order matters because:
+
+- the app repo expects AWS Secrets Manager secrets to already exist
+- the EKS workflow installs External Secrets Operator automatically
+- the app repo `ExternalSecret` resources need both AWS secrets and the operator
 
 ## Workflow Trigger Rules
 
@@ -62,6 +90,12 @@ Add these repository secrets:
 
 3. `TF_STATE_BUCKET`  
    The S3 bucket name used to store Terraform state
+
+4. `ZORD_APP_SECRETS_JSON`
+   One JSON string for the `zord/app-secrets` AWS secret
+
+5. `ZORD_EDGE_SIGNING_KEY_JSON`
+   One JSON string for the `zord/edge-signing-key` AWS secret
 
 The workflow currently uses region:
 
@@ -163,6 +197,8 @@ The workflow will:
 - initialize the S3 backend
 - validate Terraform
 - apply the EKS Terraform code
+- install Cluster Autoscaler
+- install External Secrets Operator
 
 ## How To Delete The Entire Cluster Through GitHub Actions
 
@@ -320,4 +356,5 @@ curl http://localhost:7771
 - The S3 bucket must exist before running the workflow
 - Jenkins is started by `EKS-terraform/tool.sh`
 - SonarQube is started by `EKS-terraform/tool.sh`
+- External Secrets Operator is installed by the EKS workflow after apply
 - If `tool.sh` changes, Terraform is configured to replace the admin EC2 instance and rerun bootstrap
