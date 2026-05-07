@@ -66,7 +66,22 @@ Expected:
 - Deployment is `Available`.
 - Controller pods are `Running`.
 
-## 7) Node Group Verification (AWS)
+## 7) External Secrets Operator
+
+```bash
+kubectl get deployment -n external-secrets external-secrets
+kubectl get pods -n external-secrets
+kubectl get crd | grep external-secrets
+aws eks list-pod-identity-associations --cluster-name arealis-zord-eks --region ap-south-1
+```
+
+Expected:
+- `external-secrets` deployment is `Available`.
+- Pods are `Running`.
+- CRDs like `externalsecrets.external-secrets.io` exist.
+- A pod identity association exists for namespace `external-secrets` and service account `external-secrets`.
+
+## 8) Node Group Verification (AWS)
 
 ```bash
 aws eks list-nodegroups --cluster-name arealis-zord-eks --region ap-south-1
@@ -76,7 +91,7 @@ aws eks describe-nodegroup --cluster-name arealis-zord-eks --nodegroup-name area
 Expected:
 - Node group status shows `ACTIVE`.
 
-## 8) Optional: Test an Ingress (creates an ALB)
+## 9) Optional: Test an Ingress (creates an ALB)
 
 If you want to confirm the Load Balancer Controller is working end-to-end, apply a simple Ingress and check for a new ALB.
 

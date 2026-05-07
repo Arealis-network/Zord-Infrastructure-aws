@@ -88,6 +88,11 @@ output "cluster_autoscaler_role_arn" {
   value       = aws_iam_role.cluster_autoscaler_role.arn
 }
 
+output "external_secrets_role_arn" {
+  description = "IAM role ARN used by External Secrets Operator."
+  value       = aws_iam_role.external_secrets_role.arn
+}
+
 ############################
 # oidc output
 ############################

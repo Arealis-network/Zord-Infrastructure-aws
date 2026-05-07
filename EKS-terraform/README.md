@@ -50,11 +50,7 @@ Add these repository secrets:
 2. `AWS_SECRET_ACCESS_KEY`
    Your AWS secret access key
 
-3. `AWS_REGION`
-   Example:
-   `ap-south-1`
-
-4. `TF_STATE_BUCKET`
+3. `TF_STATE_BUCKET`
    The S3 bucket name used to store Terraform state
 
 ## How To Create The S3 Bucket For Terraform State
@@ -106,7 +102,7 @@ This Terraform configuration now includes an S3 backend block.
 GitHub Actions runs Terraform with:
 
 - S3 bucket from `TF_STATE_BUCKET`
-- region from `AWS_REGION`
+- region `ap-south-1`
 - state key `eks/terraform.tfstate`
 - encryption enabled
 
@@ -143,6 +139,8 @@ The workflow will:
 - initialize the S3 backend
 - validate Terraform
 - apply the EKS Terraform code
+- install Cluster Autoscaler
+- install External Secrets Operator
 
 ## How To Delete The Entire Cluster Through GitHub Actions
 
@@ -159,7 +157,7 @@ Terraform will destroy all resources managed by this folder.
 
 Open terminal inside:
 
-`01.EKS-terraform`
+`EKS-terraform`
 
 Run init:
 
@@ -267,6 +265,13 @@ Check cluster info:
 kubectl cluster-info
 ```
 
+Check External Secrets Operator:
+
+```bash
+kubectl get pods -n external-secrets
+kubectl get crd | grep external-secrets
+```
+
 ## Notes
 
 - Pull requests trigger the pipeline automatically
@@ -274,3 +279,4 @@ kubectl cluster-info
 - Manual workflow run is required for actual deployment or deletion
 - The S3 bucket must exist before running the workflow
 - Your AWS credentials must have permissions for EKS, EC2, VPC, IAM, Auto Scaling, and S3
+- External Secrets Operator is installed automatically after `apply`

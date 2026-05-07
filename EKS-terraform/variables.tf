@@ -25,3 +25,31 @@ variable "manage_cluster_admin_access_entry" {
   type        = bool
   default     = false
 }
+
+############################
+# external secrets settings
+############################
+
+variable "external_secrets_namespace" {
+  description = "Namespace where External Secrets Operator will run."
+  type        = string
+  default     = "external-secrets"
+}
+
+variable "external_secrets_service_account" {
+  description = "Service account name used by External Secrets Operator."
+  type        = string
+  default     = "external-secrets"
+}
+
+variable "app_secret_name" {
+  description = "AWS Secrets Manager app secret name consumed by External Secrets Operator."
+  type        = string
+  default     = "zord/app-secrets"
+}
+
+variable "edge_signing_key_secret_name" {
+  description = "AWS Secrets Manager edge signing key secret name consumed by External Secrets Operator."
+  type        = string
+  default     = "zord/edge-signing-key"
+}
