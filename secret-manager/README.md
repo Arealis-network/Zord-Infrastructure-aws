@@ -139,6 +139,10 @@ Paste one full JSON value like this:
   "EVIDENCE_SIGNING_PRIVATE_KEY_BASE64": "your-real-base64-evidence-private-key",
   "EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64": "your-real-base64-archive-key",
   "GEMINI_API_KEYS": "your-gemini-key-1,your-gemini-key-2",
+  "EDGE_S3_BUCKET": "your-edge-bucket-name",
+  "INTENT_S3_BUCKET": "your-intent-bucket-name",
+  "OUTCOME_S3_BUCKET": "your-outcome-bucket-name",
+  "EVIDENCE_S3_BUCKET": "your-evidence-bucket-name",
   "RELAY_SERVICES_0_AUTH_TOKEN": "dev-dummy-token-123",
   "RELAY_SERVICES_1_AUTH_TOKEN": "dev-dummy-token-123",
   "RELAY_SERVICES_2_AUTH_TOKEN": "dev-dummy-token-123",
@@ -155,6 +159,21 @@ Paste one full JSON value like this:
 Then click:
 
 `Add secret`
+
+## S3 Bucket Keys
+
+The app deployment manifests no longer hardcode S3 bucket names.
+
+Add these keys inside `ZORD_APP_SECRETS_JSON`:
+
+| Service | JSON key |
+| --- | --- |
+| `zord-edge` | `EDGE_S3_BUCKET` |
+| `zord-intent-engine` | `INTENT_S3_BUCKET` |
+| `zord-outcome-engine` | `OUTCOME_S3_BUCKET` |
+| `zord-evidence` | `EVIDENCE_S3_BUCKET` |
+
+External Secrets copies these values into Kubernetes secret `zord-app-secrets`. The pods still receive the environment variable `S3_BUCKET`, but its value comes from the correct secret key for each service.
 
 ## Step By Step: Add `ZORD_EDGE_SIGNING_KEY_JSON`
 
@@ -209,6 +228,10 @@ You should replace these with real values:
 - `EVIDENCE_SIGNING_PRIVATE_KEY_BASE64`
 - `EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64`
 - `GEMINI_API_KEYS`
+- `EDGE_S3_BUCKET`
+- `INTENT_S3_BUCKET`
+- `OUTCOME_S3_BUCKET`
+- `EVIDENCE_S3_BUCKET`
 - `ed25519_private.pem`
 
 You can keep these existing passwords for testing if you want:
