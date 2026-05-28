@@ -1,76 +1,82 @@
 # Zord Infrastructure AWS
 
-This repository provisions the AWS infrastructure for the EKS environment and boots an admin EC2 instance with Jenkins and SonarQube using Docker.
+This repository provisions the AWS infrastructure for the Arealis Zord platform across **staging** and **production** environments using the same Terraform code.
 
-It also installs External Secrets Operator automatically after a successful EKS apply.
+It also installs External Secrets Operator and Cluster Autoscaler automatically after a successful EKS apply.
+
+## Multi-Environment Architecture
+
+Both environments live in the same AWS account but are fully isolated:
+
+| | Staging | Production |
+|---|---|---|
+| Cluster name | `arealis-zord-stg-eks` | `arealis-zord-prod-eks` |
+| VPC CIDR | `10.1.0.0/16` | `10.0.0.0/16` |
+| Secrets prefix | `staging/zord/...` | `production/zord/...` |
+| EKS state key | `eks/staging/terraform.tfstate` | `eks/production/terraform.tfstate` |
+| Secrets state key | `secret-manager/staging/terraform.tfstate` | `secret-manager/production/terraform.tfstate` |
+| IAM prefix | `arealis-zord-stg-eks-*` | `arealis-zord-prod-eks-*` |
+
+You choose the environment from the workflow dropdown. Same code, different state.
 
 ## Deployment Method
 
-This project is primarily managed through GitHub Actions, not by running Terraform manually on your local machine.
-
-The workflow file is:
+This project is managed through GitHub Actions workflows:
 
 ```text
 /.github/workflows/eks-terraform.yml
-```
-
-There is now a second Terraform stack for AWS Secrets Manager:
-
-```text
-/secret-manager
-```
-
-And its workflow file is:
-
-```text
 /.github/workflows/secrets-manager-terraform.yml
 ```
 
 ## Recommended Run Order
 
-Run the infrastructure in this order:
+### Deploy staging
 
-1. `Secret Manager Terraform` with `apply`
-2. `EKS Terraform` with `apply`
-3. deploy the Kubernetes manifests from the app repository
+1. `Secret Manager Terraform` → environment = `staging`, action = `apply`
+2. `EKS Terraform` → environment = `staging`, action = `apply`
+3. Deploy Kubernetes manifests from the app repo targeting the staging cluster
 
-That order matters because:
+### Deploy production
 
-- the app repo expects AWS Secrets Manager secrets to already exist
-- the EKS workflow installs External Secrets Operator automatically
-- the app repo `ExternalSecret` resources need both AWS secrets and the operator
+1. `Secret Manager Terraform` → environment = `production`, action = `apply`
+2. `EKS Terraform` → environment = `production`, action = `apply`
+3. Deploy Kubernetes manifests from the app repo targeting the production cluster
+
+### Destroy an environment
+
+1. `EKS Terraform` → environment = `staging`, action = `destroy`, confirm_destroy = `yes`
+2. `Secret Manager Terraform` → environment = `staging`, action = `destroy`, confirm_destroy = `yes`
+
+Destroying one environment does not affect the other.
 
 ## Workflow Trigger Rules
 
-This workflow works like this:
+Both workflows work like this:
 
-1. Pull request trigger  
-   If you create or update a pull request with changes inside `EKS-terraform`, the pipeline runs automatically.
+1. **Pull request trigger** — If you create or update a PR with changes in the relevant folder, the pipeline runs a plan automatically.
 
-2. Manual trigger  
-   You can open GitHub Actions and run the workflow manually whenever you want.
+2. **Manual trigger** — Open GitHub Actions and run the workflow manually with your chosen environment and action.
 
 Important:
 
-- It does not auto-trigger on `main`
-- It does not auto-trigger on `master`
+- It does not auto-trigger on `main` or `master`
 - It only auto-triggers on pull requests
+- Manual run is required for apply or destroy
 
 ## Manual Workflow Options
 
-When you run the workflow manually, you can choose:
+When you run either workflow manually, you choose:
 
-- `plan`
-- `apply`
-- `destroy`
+```
+Environment: [staging | production]
+Action:      [plan | apply | destroy]
+```
 
-If you select `destroy`, then you must set:
+If you select `destroy`, you must also set:
 
 ```text
 confirm_destroy = yes
 ```
-
-That will delete the entire Terraform-managed cluster and its related resources.
 
 ## GitHub Repository Secrets
 
@@ -82,32 +88,31 @@ GitHub Repository -> Settings -> Secrets and variables -> Actions
 
 Add these repository secrets:
 
-1. `AWS_ACCESS_KEY_ID`  
-   Your AWS access key ID
+### Shared (both environments)
 
-2. `AWS_SECRET_ACCESS_KEY`  
-   Your AWS secret access key
+| Secret | Description |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | Your AWS access key ID |
+| `AWS_SECRET_ACCESS_KEY` | Your AWS secret access key |
+| `TF_STATE_BUCKET` | S3 bucket name for Terraform state |
 
-3. `TF_STATE_BUCKET`  
-   The S3 bucket name used to store Terraform state
+### Staging secrets
 
-4. `ZORD_APP_SECRETS_JSON`
-   One JSON string for the `zord/app-secrets` AWS secret
+| Secret | Description |
+|---|---|
+| `ZORD_APP_SECRETS_JSON_STAGING` | JSON string for `staging/zord/app-secrets` |
+| `ZORD_EDGE_SIGNING_KEY_JSON_STAGING` | JSON string for `staging/zord/edge-signing-key` |
 
-5. `ZORD_EDGE_SIGNING_KEY_JSON`
-   One JSON string for the `zord/edge-signing-key` AWS secret
+### Production secrets
 
-The workflow currently uses region:
-
-```text
-ap-south-1
-```
+| Secret | Description |
+|---|---|
+| `ZORD_APP_SECRETS_JSON_PRODUCTION` | JSON string for `production/zord/app-secrets` |
+| `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION` | JSON string for `production/zord/edge-signing-key` |
 
 ## Create S3 Bucket For Terraform State
 
-Use a globally unique bucket name.
-
-Example:
+Use a globally unique bucket name:
 
 ```bash
 aws s3api create-bucket --bucket my-eks-terraform-state-bucket --region ap-south-1
@@ -137,174 +142,154 @@ aws s3api put-public-access-block \
   --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 ```
 
-Then store the bucket name in GitHub as:
-
-```text
-TF_STATE_BUCKET
-```
-
-Terraform state key used by the workflow:
-
-```text
-eks/terraform.tfstate
-```
+Then store the bucket name in GitHub as `TF_STATE_BUCKET`.
 
 ## How Terraform State Is Stored
 
-This Terraform configuration uses an S3 backend.
-
-GitHub Actions runs Terraform with:
-
-- S3 bucket from `TF_STATE_BUCKET`
-- region `ap-south-1`
-- state key `eks/terraform.tfstate`
-- encryption enabled
-
-This means the Terraform state is stored remotely in S3, not inside the GitHub runner.
-
-## How To Run The Workflow Manually
-
-Go to:
+Each environment has its own state file in the same S3 bucket:
 
 ```text
-GitHub Repository -> Actions -> EKS Terraform -> Run workflow
+eks/staging/terraform.tfstate
+eks/production/terraform.tfstate
+secret-manager/staging/terraform.tfstate
+secret-manager/production/terraform.tfstate
 ```
 
-Then choose:
+This means environments are fully independent. You can destroy staging without touching production.
 
-- `plan` to see changes
-- `apply` to deploy the cluster
-- `destroy` to delete the cluster
-
-If you choose `destroy`, set:
-
-```text
-confirm_destroy = yes
-```
-
-## How To Deploy The Cluster Through GitHub Actions
+## How To Deploy Through GitHub Actions
 
 1. Push your code to GitHub
 2. Open `Actions`
-3. Select `EKS Terraform`
+3. Select the workflow (`EKS Terraform` or `Secret Manager Terraform`)
 4. Click `Run workflow`
-5. Choose `apply`
+5. Choose your environment and action
 6. Run the workflow
 
-The workflow will:
+The EKS workflow will:
 
-- check Terraform formatting
-- initialize the S3 backend
-- validate Terraform
-- apply the EKS Terraform code
-- install Cluster Autoscaler
-- install External Secrets Operator
+- Check Terraform formatting
+- Initialize the S3 backend with the environment-specific state key
+- Validate Terraform
+- Apply the EKS Terraform code
+- Install Cluster Autoscaler
+- Install External Secrets Operator
 
-## How To Delete The Entire Cluster Through GitHub Actions
+## How To Delete An Environment Through GitHub Actions
 
 1. Open `Actions`
 2. Select `EKS Terraform`
 3. Click `Run workflow`
-4. Choose `destroy`
-5. Set `confirm_destroy` to `yes`
-6. Run the workflow
+4. Choose the environment to destroy
+5. Set action to `destroy`
+6. Set `confirm_destroy` to `yes`
+7. Run the workflow
 
-Terraform will destroy all resources managed by this folder.
+Then do the same for `Secret Manager Terraform` if you want to remove the secrets too.
 
 ## Local Terraform Commands
 
-If needed, you can still run Terraform locally from the `EKS-terraform` folder:
+If needed, you can run Terraform locally. Example for staging:
 
 ```bash
 cd EKS-terraform
 
 terraform init \
   -backend-config="bucket=<your-tf-state-bucket>" \
-  -backend-config="key=eks/terraform.tfstate" \
+  -backend-config="key=eks/staging/terraform.tfstate" \
   -backend-config="region=ap-south-1" \
   -backend-config="encrypt=true"
 
-terraform plan
-terraform apply
+terraform plan -var="environment=staging"
+terraform apply -var="environment=staging"
 ```
 
-If you only want to recreate the admin EC2 instance and rerun `tool.sh`, use:
+For production:
 
 ```bash
-terraform apply -replace=aws_instance.eks
+terraform init -reconfigure \
+  -backend-config="bucket=<your-tf-state-bucket>" \
+  -backend-config="key=eks/production/terraform.tfstate" \
+  -backend-config="region=ap-south-1" \
+  -backend-config="encrypt=true"
+
+terraform plan -var="environment=production"
+terraform apply -var="environment=production"
 ```
 
-To destroy all infrastructure manually:
+To destroy:
 
 ```bash
-terraform destroy
+terraform destroy -var="environment=staging"
+```
+
+## Connect To Your Cluster
+
+After deploy, update kubeconfig:
+
+```bash
+# Staging
+aws eks update-kubeconfig --region ap-south-1 --name arealis-zord-stg-eks
+
+# Production
+aws eks update-kubeconfig --region ap-south-1 --name arealis-zord-prod-eks
+```
+
+Check nodes:
+
+```bash
+kubectl get nodes
+```
+
+Check all pods:
+
+```bash
+kubectl get pods -A
 ```
 
 ## Get EC2 Public IP
 
-After `terraform apply` or after a successful GitHub Actions apply, get the EC2 public IP:
-
-```bash
-aws ec2 describe-instances --region ap-south-1 \
-  --query "Reservations[*].Instances[*].[InstanceId,PublicIpAddress,State.Name]" \
-  --output table
-```
-
-You can also get it from Terraform output:
+After apply, get the EC2 admin instance public IP:
 
 ```bash
 terraform output ec2_public_ip
 ```
 
-## Access Jenkins
+Or from AWS:
 
-Open Jenkins in your browser:
+```bash
+aws ec2 describe-instances --region ap-south-1 \
+  --query "Reservations[*].Instances[*].[InstanceId,PublicIpAddress,State.Name,Tags[?Key=='Name'].Value|[0]]" \
+  --output table
+```
+
+## Access Jenkins
 
 ```text
 http://<EC2-PUBLIC-IP>:7777
 ```
 
-Jenkins runs in Docker with this port mapping:
-
-```text
-7777 -> 8080
-```
+Jenkins runs in Docker with port mapping `7777 -> 8080`.
 
 ## Access SonarQube
-
-Open SonarQube in your browser:
 
 ```text
 http://<EC2-PUBLIC-IP>:7771
 ```
 
-SonarQube runs in Docker with this port mapping:
-
-```text
-7771 -> 9000
-```
-
-SonarQube screen reference:
+SonarQube runs in Docker with port mapping `7771 -> 9000`.
 
 ![SonarQube](EKS-terraform/images/sonaroube.png)
 
-## SSH Into EC2
-
-Connect to the admin EC2 instance:
-
-```bash
-ssh -i <your-key.pem> ec2-user@<EC2-PUBLIC-IP>
-```
-
 ## Jenkins Initial Admin Password
 
-To read the Jenkins initial admin password from EC2:
+On the EC2 instance:
 
 ```bash
 cat /home/ec2-user/jenkins-initial-admin-password
 ```
 
-If that file is not present, read it directly from the Jenkins container:
+Or directly from the container:
 
 ```bash
 sudo docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
@@ -312,49 +297,42 @@ sudo docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 
 ## Useful Checks On EC2
 
-Check running containers:
-
 ```bash
 sudo docker ps
-```
-
-Check Jenkins logs:
-
-```bash
 sudo docker logs jenkins --tail 50
-```
-
-Check SonarQube logs:
-
-```bash
 sudo docker logs sonarqube --tail 50
-```
-
-Check bootstrap logs:
-
-```bash
 sudo cat /var/log/tool-bootstrap.log
 ```
 
-Check Jenkins locally on the instance:
+## Repository Structure
 
-```bash
-curl http://localhost:7777
-```
-
-Check SonarQube locally on the instance:
-
-```bash
-curl http://localhost:7771
+```text
+.
+├── .github/workflows/
+│   ├── eks-terraform.yml              # EKS cluster workflow
+│   └── secrets-manager-terraform.yml  # Secrets Manager workflow
+├── EKS-terraform/
+│   ├── main.tf                        # VPC, EKS, IAM, addons, EC2
+│   ├── variables.tf                   # Environment + cluster variables
+│   ├── outputs.tf                     # Cluster, network, IAM outputs
+│   ├── tool.sh                        # EC2 bootstrap (Jenkins, SonarQube)
+│   ├── install-autoscaler.sh          # Helm install Cluster Autoscaler
+│   ├── install-external-secrets.sh    # Helm install External Secrets Operator
+│   └── uninstall-helm.sh             # Pre-destroy Helm cleanup
+├── secret-manager/
+│   ├── main.tf                        # AWS Secrets Manager resources
+│   ├── variables.tf                   # Environment + secret variables
+│   └── outputs.tf                     # Secret name and ARN outputs
+└── README.md
 ```
 
 ## Notes
 
-- Pull requests trigger the pipeline automatically
-- Push to `main` or `master` does not trigger the workflow
-- Manual workflow run is required for actual deployment or deletion
-- The S3 bucket must exist before running the workflow
-- Jenkins is started by `EKS-terraform/tool.sh`
-- SonarQube is started by `EKS-terraform/tool.sh`
+- Same code deploys both staging and production
+- Environments are isolated by resource names, VPC CIDRs, state files, and IAM roles
+- Pull requests trigger plan automatically
+- Manual workflow run is required for apply or destroy
+- The S3 bucket must exist before running any workflow
+- Jenkins and SonarQube are started by `EKS-terraform/tool.sh`
 - External Secrets Operator is installed by the EKS workflow after apply
-- If `tool.sh` changes, Terraform is configured to replace the admin EC2 instance and rerun bootstrap
+- If `tool.sh` changes, Terraform replaces the EC2 instance and reruns bootstrap

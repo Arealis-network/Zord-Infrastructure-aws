@@ -4,36 +4,53 @@ This folder is for AWS Secrets Manager.
 
 This Terraform code does **not** create your EKS cluster.
 
-This folder only creates these 2 AWS Secrets Manager secret containers:
+This folder only creates these 2 AWS Secrets Manager secret containers per environment:
 
-- `zord/app-secrets`
-- `zord/edge-signing-key`
+- `staging/zord/app-secrets`
+- `staging/zord/edge-signing-key`
+- `production/zord/app-secrets`
+- `production/zord/edge-signing-key`
 
 Then GitHub Actions will put the real secret values inside them.
 
 That means this flow is:
 
-1. Terraform creates the secret names in AWS
+1. Terraform creates the secret names in AWS (prefixed by environment)
 2. GitHub Actions reads your GitHub secrets
 3. GitHub Actions writes the real JSON values into AWS Secrets Manager
 
 This is good because your real secrets do not get stored in Terraform state.
 
-## Where This Fits In The Full Flow
+## Multi-Environment Support
 
-This folder is only the first part.
+This stack supports two environments using the same code:
+
+- **staging**
+- **production**
+
+Each environment gets:
+
+- Its own secret names (prefixed with `staging/` or `production/`)
+- Its own Terraform state file
+- Its own GitHub secrets for values
+
+You choose the environment from the workflow dropdown when you click Run workflow.
+
+## Where This Fits In The Full Flow
 
 Your full deployment flow is:
 
-1. run `secret-manager` workflow with `apply`
-2. run `EKS Terraform` workflow with `apply`
-3. EKS workflow installs External Secrets Operator automatically
-4. deploy the Kubernetes manifests from your app repo
-5. External Secrets Operator reads AWS Secrets Manager and creates Kubernetes secrets inside the cluster
+1. Run `Secret Manager Terraform` with environment = `staging`, action = `apply`
+2. Run `EKS Terraform` with environment = `staging`, action = `apply`
+3. Deploy the app manifests from your app repo targeting the staging cluster
 
-So this folder creates the AWS side.
+Then for production:
 
-The EKS workflow creates the cluster side.
+1. Run `Secret Manager Terraform` with environment = `production`, action = `apply`
+2. Run `EKS Terraform` with environment = `production`, action = `apply`
+3. Deploy the app manifests from your app repo targeting the production cluster
+
+EKS workflow installs External Secrets Operator automatically.
 
 Your app repo uses these Kubernetes resources:
 
@@ -67,8 +84,10 @@ You need these GitHub secrets:
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `TF_STATE_BUCKET`
-- `ZORD_APP_SECRETS_JSON`
-- `ZORD_EDGE_SIGNING_KEY_JSON`
+- `ZORD_APP_SECRETS_JSON_STAGING`
+- `ZORD_APP_SECRETS_JSON_PRODUCTION`
+- `ZORD_EDGE_SIGNING_KEY_JSON_STAGING`
+- `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION`
 
 ## What Each GitHub Secret Means
 
@@ -84,27 +103,36 @@ Your AWS secret access key.
 
 The S3 bucket name where Terraform remote state is stored.
 
-This stack uses this Terraform state key:
+State keys used by the workflow:
 
-`secret-manager/terraform.tfstate`
+- `secret-manager/staging/terraform.tfstate`
+- `secret-manager/production/terraform.tfstate`
 
-### `ZORD_APP_SECRETS_JSON`
+### `ZORD_APP_SECRETS_JSON_STAGING`
 
-This is one full JSON string.
+JSON string for the staging app secrets. Becomes the value of AWS secret:
 
-It will become the value of AWS secret:
+`staging/zord/app-secrets`
 
-`zord/app-secrets`
+### `ZORD_APP_SECRETS_JSON_PRODUCTION`
 
-### `ZORD_EDGE_SIGNING_KEY_JSON`
+JSON string for the production app secrets. Becomes the value of AWS secret:
 
-This is one full JSON string.
+`production/zord/app-secrets`
 
-It will become the value of AWS secret:
+### `ZORD_EDGE_SIGNING_KEY_JSON_STAGING`
 
-`zord/edge-signing-key`
+JSON string for the staging edge signing key. Becomes the value of AWS secret:
 
-## Step By Step: Add `ZORD_APP_SECRETS_JSON`
+`staging/zord/edge-signing-key`
+
+### `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION`
+
+JSON string for the production edge signing key. Becomes the value of AWS secret:
+
+`production/zord/edge-signing-key`
+
+## Step By Step: Add `ZORD_APP_SECRETS_JSON_STAGING`
 
 Open GitHub:
 
@@ -117,14 +145,14 @@ Click:
 Secret name:
 
 ```text
-ZORD_APP_SECRETS_JSON
+ZORD_APP_SECRETS_JSON_STAGING
 ```
 
 Paste one full JSON value like this:
 
 ```json
 {
-  "POSTGRES_SUPERUSER_PASSWORD": "your-real-postgres-admin-password",
+  "POSTGRES_SUPERUSER_PASSWORD": "your-staging-postgres-admin-password",
   "EDGE_DB_PASSWORD": "zord_password",
   "INTENT_DB_PASSWORD": "intent_password",
   "RELAY_DB_PASSWORD": "relay_password",
@@ -132,17 +160,13 @@ Paste one full JSON value like this:
   "OUTCOME_DB_PASSWORD": "outcome_password",
   "EVIDENCE_DB_PASSWORD": "evidence_password",
   "INTELLIGENCE_DB_PASSWORD": "zpi_secret",
-  "ZORD_VAULT_KEY": "your-real-vault-key",
-  "INTERNAL_ADMIN_KEY": "your-real-admin-key",
+  "ZORD_VAULT_KEY": "your-staging-vault-key",
+  "INTERNAL_ADMIN_KEY": "your-staging-admin-key",
   "MASTER_KEY": "W2MSQaooUlXVmVxGB7NgU06keCyKgQ+NlbdaDHCERAE=",
-  "TOKEN_SECRET": "your-real-base64-token-secret",
-  "EVIDENCE_SIGNING_PRIVATE_KEY_BASE64": "your-real-base64-evidence-private-key",
-  "EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64": "your-real-base64-archive-key",
-  "GEMINI_API_KEYS": "your-gemini-key-1,your-gemini-key-2",
-  "EDGE_S3_BUCKET": "your-edge-bucket-name",
-  "INTENT_S3_BUCKET": "your-intent-bucket-name",
-  "OUTCOME_S3_BUCKET": "your-outcome-bucket-name",
-  "EVIDENCE_S3_BUCKET": "your-evidence-bucket-name",
+  "TOKEN_SECRET": "your-staging-base64-token-secret",
+  "EVIDENCE_SIGNING_PRIVATE_KEY_BASE64": "your-staging-base64-evidence-private-key",
+  "EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64": "your-staging-base64-archive-key",
+  "GEMINI_API_KEYS": "your-staging-gemini-key-1,your-staging-gemini-key-2",
   "RELAY_SERVICES_0_AUTH_TOKEN": "dev-dummy-token-123",
   "RELAY_SERVICES_1_AUTH_TOKEN": "dev-dummy-token-123",
   "RELAY_SERVICES_2_AUTH_TOKEN": "dev-dummy-token-123",
@@ -160,22 +184,9 @@ Then click:
 
 `Add secret`
 
-## S3 Bucket Keys
+Do the same for `ZORD_APP_SECRETS_JSON_PRODUCTION` with your production values.
 
-The app deployment manifests no longer hardcode S3 bucket names.
-
-Add these keys inside `ZORD_APP_SECRETS_JSON`:
-
-| Service | JSON key |
-| --- | --- |
-| `zord-edge` | `EDGE_S3_BUCKET` |
-| `zord-intent-engine` | `INTENT_S3_BUCKET` |
-| `zord-outcome-engine` | `OUTCOME_S3_BUCKET` |
-| `zord-evidence` | `EVIDENCE_S3_BUCKET` |
-
-External Secrets copies these values into Kubernetes secret `zord-app-secrets`. The pods still receive the environment variable `S3_BUCKET`, but its value comes from the correct secret key for each service.
-
-## Step By Step: Add `ZORD_EDGE_SIGNING_KEY_JSON`
+## Step By Step: Add `ZORD_EDGE_SIGNING_KEY_JSON_STAGING`
 
 Click:
 
@@ -184,20 +195,22 @@ Click:
 Secret name:
 
 ```text
-ZORD_EDGE_SIGNING_KEY_JSON
+ZORD_EDGE_SIGNING_KEY_JSON_STAGING
 ```
 
 Paste JSON like this:
 
 ```json
 {
-  "ed25519_private.pem": "-----BEGIN PRIVATE KEY-----\nYOUR_REAL_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----"
+  "ed25519_private.pem": "-----BEGIN PRIVATE KEY-----\nYOUR_STAGING_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----"
 }
 ```
 
 Then click:
 
 `Add secret`
+
+Do the same for `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION` with your production key.
 
 ## Very Important About Private Key Format
 
@@ -219,7 +232,7 @@ Do not paste raw multiline YAML there.
 
 ## Which Values You Must Change Before Production
 
-You should replace these with real values:
+For production secrets, you should use strong, unique values for:
 
 - `POSTGRES_SUPERUSER_PASSWORD`
 - `ZORD_VAULT_KEY`
@@ -228,23 +241,10 @@ You should replace these with real values:
 - `EVIDENCE_SIGNING_PRIVATE_KEY_BASE64`
 - `EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64`
 - `GEMINI_API_KEYS`
-- `EDGE_S3_BUCKET`
-- `INTENT_S3_BUCKET`
-- `OUTCOME_S3_BUCKET`
-- `EVIDENCE_S3_BUCKET`
 - `ed25519_private.pem`
+- All database passwords
 
-You can keep these existing passwords for testing if you want:
-
-- `zord_password`
-- `intent_password`
-- `relay_password`
-- `token_password`
-- `outcome_password`
-- `evidence_password`
-- `zpi_secret`
-
-But for real production, even those should become strong passwords.
+For staging, you can use test values.
 
 ## How The Workflow Works
 
@@ -252,11 +252,12 @@ Workflow file:
 
 `.github/workflows/secrets-manager-terraform.yml`
 
-Manual actions available:
+When you click Run workflow, you choose:
 
-- `plan`
-- `apply`
-- `destroy`
+```
+Environment: [staging | production]
+Action:      [plan | apply | destroy]
+```
 
 If you choose destroy, you must also set:
 
@@ -277,6 +278,7 @@ Click:
 Choose:
 
 ```text
+environment = staging
 action = apply
 ```
 
@@ -286,73 +288,35 @@ Then run it.
 
 The workflow does this:
 
-1. checks out code
-2. sets up Terraform
-3. logs in to AWS
-4. runs `terraform init`
-5. runs `terraform validate`
-6. runs `terraform apply`
-7. creates these AWS secret containers:
-   - `zord/app-secrets`
-   - `zord/edge-signing-key`
-8. reads:
-   - `ZORD_APP_SECRETS_JSON`
-   - `ZORD_EDGE_SIGNING_KEY_JSON`
-9. writes those JSON values into AWS Secrets Manager
+1. Checks out code
+2. Sets up Terraform
+3. Logs in to AWS
+4. Runs `terraform init` with environment-specific state key
+5. Runs `terraform validate`
+6. Runs `terraform apply` with `TF_VAR_environment` set
+7. Creates these AWS secret containers (for staging example):
+   - `staging/zord/app-secrets`
+   - `staging/zord/edge-signing-key`
+8. Reads the matching GitHub secret:
+   - `ZORD_APP_SECRETS_JSON_STAGING`
+   - `ZORD_EDGE_SIGNING_KEY_JSON_STAGING`
+9. Writes those JSON values into AWS Secrets Manager
 
-So after workflow success, your AWS secret values are ready.
+So after workflow success, your AWS secret values are ready for that environment.
 
 ## How To Check It Worked
 
 After the workflow completes:
 
-1. open AWS Console
-2. open `Secrets Manager`
-3. search for:
-   - `zord/app-secrets`
-   - `zord/edge-signing-key`
+1. Open AWS Console
+2. Open `Secrets Manager`
+3. Search for:
+   - `staging/zord/app-secrets` (if you ran staging)
+   - `production/zord/app-secrets` (if you ran production)
 
-You should see both secrets there.
+You should see the secrets there.
 
-## What Happens After This
-
-After this workflow succeeds, do the next 2 things:
-
-1. Run the `EKS Terraform` workflow with `apply`
-2. Deploy your app repo manifests
-
-The EKS workflow now installs:
-
-- Cluster Autoscaler
-- External Secrets Operator
-
-After your app manifests are applied, External Secrets Operator will create these Kubernetes secrets:
-
-- `zord-app-secrets`
-- `zord-edge-signing-key`
-
-That means your pods can keep using normal `secretKeyRef` and mounted Kubernetes secrets.
-
-## How To Verify External Secrets Later
-
-After EKS is up and your app manifests are applied, run:
-
-```bash
-kubectl get pods -n external-secrets
-kubectl get externalsecret -n zord
-kubectl get secret -n zord zord-app-secrets
-kubectl get secret -n zord zord-edge-signing-key
-```
-
-Expected result:
-
-- External Secrets Operator pods are `Running`
-- `ExternalSecret` objects exist in namespace `zord`
-- Kubernetes secrets `zord-app-secrets` and `zord-edge-signing-key` exist
-
-## How To Destroy With One Click
-
-Yes, this is possible.
+## How To Destroy One Environment
 
 Open:
 
@@ -365,36 +329,39 @@ Click:
 Choose:
 
 ```text
+environment = staging
 action = destroy
-```
-
-And set:
-
-```text
 confirm_destroy = yes
 ```
 
 Then run it.
 
-This will run:
-
-`terraform destroy`
-
-for this `secret-manager` folder.
+This will destroy only the staging secrets. Production is untouched.
 
 ## Important Note About Destroy
 
-This destroy removes the Terraform-managed AWS secrets from this folder.
+This destroy removes only the Terraform-managed AWS secrets for the selected environment.
 
 It does **not** destroy:
 
+- The other environment's secrets
 - EKS cluster
 - VPC
 - EC2 admin box
-- node groups
-- ECR
+- Node groups
 
 Those are in your `EKS-terraform` stack, not here.
+
+## Terraform State Files
+
+Each environment has its own state file:
+
+| Environment | State Key |
+|---|---|
+| staging | `secret-manager/staging/terraform.tfstate` |
+| production | `secret-manager/production/terraform.tfstate` |
+
+This means staging and production are fully independent. You can destroy one without affecting the other.
 
 ## Local Commands If You Want To Test
 
@@ -405,12 +372,12 @@ terraform init -backend=false
 terraform validate
 ```
 
-If using real backend locally:
+If using real backend locally for staging:
 
 ```powershell
 terraform init `
   -backend-config="bucket=<your-tf-state-bucket>" `
-  -backend-config="key=secret-manager/terraform.tfstate" `
+  -backend-config="key=secret-manager/staging/terraform.tfstate" `
   -backend-config="region=ap-south-1" `
   -backend-config="encrypt=true"
 ```
@@ -418,16 +385,33 @@ terraform init `
 Then:
 
 ```powershell
-terraform plan
+terraform plan -var="environment=staging"
+terraform apply -var="environment=staging"
+```
+
+For production:
+
+```powershell
+terraform init -reconfigure `
+  -backend-config="bucket=<your-tf-state-bucket>" `
+  -backend-config="key=secret-manager/production/terraform.tfstate" `
+  -backend-config="region=ap-south-1" `
+  -backend-config="encrypt=true"
+
+terraform plan -var="environment=production"
+terraform apply -var="environment=production"
 ```
 
 ## Short Summary
 
 You need to do only this:
 
-1. add GitHub secret `ZORD_APP_SECRETS_JSON`
-2. add GitHub secret `ZORD_EDGE_SIGNING_KEY_JSON`
-3. make sure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `TF_STATE_BUCKET` already exist
-4. run GitHub Action with `apply`
+1. Add GitHub secrets:
+   - `ZORD_APP_SECRETS_JSON_STAGING`
+   - `ZORD_APP_SECRETS_JSON_PRODUCTION`
+   - `ZORD_EDGE_SIGNING_KEY_JSON_STAGING`
+   - `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION`
+2. Make sure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `TF_STATE_BUCKET` already exist
+3. Run GitHub Action with environment + apply
 
-After that, AWS Secrets Manager will contain your secret values.
+After that, AWS Secrets Manager will contain your secret values for that environment.

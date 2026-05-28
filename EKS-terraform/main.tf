@@ -31,17 +31,18 @@ data "aws_ssm_parameter" "amazon_linux_2023_ami" {
 }
 
 locals {
-  cluster_name        = "arealis-zord-eks"
+  env_short           = var.environment == "production" ? "prod" : "stg"
+  cluster_name        = "arealis-zord-${local.env_short}-eks"
   admin_principal_arn = var.eks_admin_principal_arn != "" ? var.eks_admin_principal_arn : data.aws_caller_identity.current.arn
-  vpc_name_prefix     = "Arealis zord vpc"
-  eks_name_prefix     = "Arealis zord eks"
-  vpc_resource_prefix = "arealis-zord-vpc"
-  eks_resource_prefix = "arealis-zord-eks"
-  node_group_name     = "arealis-zord-eks-node-group"
+  vpc_name_prefix     = "Arealis zord ${local.env_short} vpc"
+  eks_name_prefix     = "Arealis zord ${local.env_short} eks"
+  vpc_resource_prefix = "arealis-zord-${local.env_short}-vpc"
+  eks_resource_prefix = "arealis-zord-${local.env_short}-eks"
+  node_group_name     = "arealis-zord-${local.env_short}-eks-node-group"
   availability_zones  = slice(data.aws_availability_zones.available.names, 0, 2)
 
   common_tags = {
-    Environment = "dev"
+    Environment = var.environment
     Project     = "arealis-zord-eks"
     Owner       = "yaswanth"
     ManagedBy   = "Terraform"
@@ -49,9 +50,17 @@ locals {
   }
 
   external_secret_arns = [
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.app_secret_name}*",
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.edge_signing_key_secret_name}*"
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.app_secret_name}*",
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.edge_signing_key_secret_name}*"
   ]
+
+  # Use different CIDR ranges per environment so both can coexist in the same account
+  # production: 10.0.0.0/16, staging: 10.1.0.0/16
+  vpc_cidr      = var.environment == "production" ? "10.0.0.0/16" : "10.1.0.0/16"
+  public1_cidr  = var.environment == "production" ? "10.0.1.0/24" : "10.1.1.0/24"
+  public2_cidr  = var.environment == "production" ? "10.0.2.0/24" : "10.1.2.0/24"
+  private1_cidr = var.environment == "production" ? "10.0.3.0/24" : "10.1.3.0/24"
+  private2_cidr = var.environment == "production" ? "10.0.4.0/24" : "10.1.4.0/24"
 }
 
 ############################
@@ -60,7 +69,7 @@ locals {
 
 resource "aws_vpc" "eks_vpc" {
 
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = local.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
 
@@ -85,7 +94,7 @@ resource "aws_internet_gateway" "igw" {
 resource "aws_subnet" "public1" {
 
   vpc_id                  = aws_vpc.eks_vpc.id
-  cidr_block              = "10.0.1.0/24"
+  cidr_block              = local.public1_cidr
   availability_zone       = local.availability_zones[0]
   map_public_ip_on_launch = true
 
@@ -98,7 +107,7 @@ resource "aws_subnet" "public1" {
 resource "aws_subnet" "public2" {
 
   vpc_id                  = aws_vpc.eks_vpc.id
-  cidr_block              = "10.0.2.0/24"
+  cidr_block              = local.public2_cidr
   availability_zone       = local.availability_zones[1]
   map_public_ip_on_launch = true
 
@@ -111,7 +120,7 @@ resource "aws_subnet" "public2" {
 resource "aws_subnet" "private1" {
 
   vpc_id            = aws_vpc.eks_vpc.id
-  cidr_block        = "10.0.3.0/24"
+  cidr_block        = local.private1_cidr
   availability_zone = local.availability_zones[0]
 
   tags = {
@@ -123,7 +132,7 @@ resource "aws_subnet" "private1" {
 resource "aws_subnet" "private2" {
 
   vpc_id            = aws_vpc.eks_vpc.id
-  cidr_block        = "10.0.4.0/24"
+  cidr_block        = local.private2_cidr
   availability_zone = local.availability_zones[1]
 
   tags = {
