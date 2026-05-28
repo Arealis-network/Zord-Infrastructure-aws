@@ -1,11 +1,26 @@
 ############################
+# environment
+############################
+
+variable "environment" {
+  description = "Deployment environment. Must be staging or production."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["staging", "production"], var.environment)
+    error_message = "environment must be staging or production."
+  }
+}
+
+############################
 # cluster settings
 ############################
 
 variable "cluster_version" {
   description = "Kubernetes version for the EKS cluster and node group."
   type        = string
-  default     = "1.35"
+  default     = "1.32"
 }
 
 variable "aws_region" {

@@ -27,12 +27,12 @@ locals {
 
   secrets = {
     app = {
-      name        = var.app_secret_name
-      description = "Application secret bundle for Arealis Zord workloads"
+      name        = "${var.environment}/${var.app_secret_name}"
+      description = "Application secret bundle for Arealis Zord workloads (${var.environment})"
     }
     edge_signing_key = {
-      name        = var.edge_signing_key_secret_name
-      description = "Edge signing private key for Arealis Zord"
+      name        = "${var.environment}/${var.edge_signing_key_secret_name}"
+      description = "Edge signing private key for Arealis Zord (${var.environment})"
     }
   }
 }

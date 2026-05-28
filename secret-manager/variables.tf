@@ -5,9 +5,14 @@ variable "aws_region" {
 }
 
 variable "environment" {
-  description = "Environment tag for the secrets."
+  description = "Deployment environment. Must be staging or production."
   type        = string
-  default     = "dev"
+  default     = "production"
+
+  validation {
+    condition     = contains(["staging", "production"], var.environment)
+    error_message = "environment must be staging or production."
+  }
 }
 
 variable "project_name" {
@@ -23,13 +28,13 @@ variable "owner" {
 }
 
 variable "app_secret_name" {
-  description = "AWS Secrets Manager secret name for the app secret bundle."
+  description = "AWS Secrets Manager secret name for the app secret bundle (without environment prefix)."
   type        = string
   default     = "zord/app-secrets"
 }
 
 variable "edge_signing_key_secret_name" {
-  description = "AWS Secrets Manager secret name for the edge signing key."
+  description = "AWS Secrets Manager secret name for the edge signing key (without environment prefix)."
   type        = string
   default     = "zord/edge-signing-key"
 }

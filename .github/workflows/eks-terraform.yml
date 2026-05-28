@@ -1,20 +1,14 @@
 name: EKS Terraform
 
-# Show a different workflow run name for PR plan, plan, apply, and destroy.
 run-name: >-
   ${{
     github.event_name == 'pull_request'
     && format('EKS Terraform PR Plan #{0}', github.event.pull_request.number)
-    || github.event.inputs.action == 'apply'
-    && 'EKS Terraform Apply'
-    || github.event.inputs.action == 'destroy'
-    && 'EKS Terraform Destroy'
-    || github.event.inputs.action == 'plan'
-    && 'EKS Terraform Plan'
-    || 'EKS Terraform'
+    || format('EKS Terraform {0} ({1})',
+        github.event.inputs.action || 'plan',
+        github.event.inputs.environment || 'production')
   }}
 
-# Auto-run only on pull requests. Use workflow_dispatch when you want to run it yourself.
 on:
   pull_request:
     paths:
@@ -22,6 +16,14 @@ on:
       - ".github/workflows/eks-terraform.yml"
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
       action:
         description: "Choose what you want to do with the cluster"
         required: true
@@ -40,21 +42,17 @@ on:
 permissions:
   contents: read
 
-# Prevent two runs for the same ref from changing the same infrastructure at the same time.
 concurrency:
-  group: eks-terraform-${{ github.workflow }}-${{ github.ref }}
+  group: eks-terraform-${{ github.event.inputs.environment || 'pr' }}-${{ github.ref }}
   cancel-in-progress: false
 
-# Common Terraform settings used by both jobs.
 env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   TF_WORKING_DIR: "EKS-terraform"
-  TF_STATE_KEY: "eks/terraform.tfstate"
   AWS_REGION_VALUE: "ap-south-1"
 
 jobs:
-  # This job runs automatically for pull requests and only performs validation and plan.
   terraform-plan-pr:
     name: Terraform Plan On PR
     if: github.event_name == 'pull_request'
@@ -66,17 +64,14 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
 
     steps:
-      # Download the repository code into the GitHub runner.
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Install the Terraform CLI.
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
-      # Login to AWS using repository secrets.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -87,46 +82,43 @@ jobs:
       - name: Terraform Format Check
         run: terraform fmt -check
 
-      # Initialize Terraform and connect it to the remote S3 backend state file.
       - name: Terraform Init
         run: |
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="key=eks/production/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
             -backend-config="encrypt=true"
 
       - name: Terraform Validate
         run: terraform validate
 
-      # Show what Terraform will create, update, or delete for this pull request.
       - name: Terraform Plan
-        run: terraform plan -no-color
+        run: terraform plan -var="environment=production" -no-color
 
-  # This job runs only when you manually start the workflow from GitHub Actions.
   terraform-manual:
-    name: Terraform Manual Action
+    name: "Terraform ${{ github.event.inputs.action }} (${{ github.event.inputs.environment }})"
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ github.event.inputs.environment }}
 
     defaults:
       run:
         shell: bash
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+    env:
+      TF_VAR_environment: ${{ github.event.inputs.environment }}
+
     steps:
-      # Download the repository code into the GitHub runner.
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Install the Terraform CLI.
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
-      # Login to AWS using repository secrets.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -134,7 +126,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      # Add a safety check so destroy works only when you explicitly confirm it.
       - name: Validate destroy confirmation
         if: github.event.inputs.action == 'destroy'
         run: |
@@ -146,19 +137,17 @@ jobs:
       - name: Terraform Format Check
         run: terraform fmt -check
 
-      # Initialize Terraform and connect it to the remote S3 backend state file.
       - name: Terraform Init
         run: |
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="key=eks/${{ github.event.inputs.environment }}/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
             -backend-config="encrypt=true"
 
       - name: Terraform Validate
         run: terraform validate
 
-      # Run only the selected action from the manual workflow input.
       - name: Terraform Plan
         if: github.event.inputs.action == 'plan'
         run: terraform plan -no-color
@@ -220,64 +209,33 @@ jobs:
       - name: Cluster Connection Summary
         if: github.event.inputs.action == 'apply'
         run: |
+          CLUSTER_NAME=$(terraform output -raw cluster_name)
           RESOURCE_COUNT=$(terraform show -json | jq '[.values.root_module.resources | length] | add // 0')
           {
-            echo "## 🎉 Congratulations! Your Kubernetes Cluster Is Ready"
+            echo "## 🎉 Your ${{ github.event.inputs.environment }} Kubernetes Cluster Is Ready"
             echo ""
+            echo "**Cluster: \`${CLUSTER_NAME}\`**"
+            echo "**Environment: \`${{ github.event.inputs.environment }}\`**"
             echo "**Total resources created: ${RESOURCE_COUNT}**"
             echo ""
             echo "---"
             echo ""
-            echo "## How To Connect To Your Cluster After Deployment"
-            echo ""
-            echo "Your current cluster name in this Terraform is:"
-            echo ""
-            echo "\`arealis-zord-eks\`"
-            echo ""
-            echo "Your current region in this Terraform is:"
-            echo ""
-            echo "\`ap-south-1\`"
-            echo ""
-            echo "Update kubeconfig:"
+            echo "## Connect To Your Cluster"
             echo ""
             echo "\`\`\`bash"
-            echo "aws eks update-kubeconfig --region ap-south-1 --name arealis-zord-eks"
+            echo "aws eks update-kubeconfig --region ${{ env.AWS_REGION_VALUE }} --name ${CLUSTER_NAME}"
             echo "\`\`\`"
             echo ""
-            echo "Check nodes:"
+            echo "## Verify"
             echo ""
             echo "\`\`\`bash"
             echo "kubectl get nodes"
-            echo "\`\`\`"
-            echo ""
-            echo "Check all pods:"
-            echo ""
-            echo "\`\`\`bash"
             echo "kubectl get pods -A"
-            echo "\`\`\`"
-            echo ""
-            echo "Check services:"
-            echo ""
-            echo "\`\`\`bash"
-            echo "kubectl get svc -A"
-            echo "\`\`\`"
-            echo ""
-            echo "Check External Secrets Operator:"
-            echo ""
-            echo "\`\`\`bash"
             echo "kubectl get pods -n external-secrets"
-            echo "kubectl get crd | grep external-secrets"
-            echo "\`\`\`"
-            echo ""
-            echo "Check Cluster Autoscaler:"
-            echo ""
-            echo "\`\`\`bash"
             echo "kubectl get pods -n kube-system | grep cluster-autoscaler"
-            echo "kubectl logs -n kube-system deployment/cluster-autoscaler-aws-cluster-autoscaler --tail=50"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Uninstall Helm releases before destroy so their AWS resources (LBs, etc.) are cleaned up first.
       - name: Pre-Destroy Helm Uninstall
         if: github.event.inputs.action == 'destroy'
         run: |
@@ -285,31 +243,33 @@ jobs:
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
 
-          export CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "arealis-zord-eks")
+          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
+          if [ -z "${CLUSTER_NAME}" ]; then
+            echo "Could not determine cluster name. Skipping Helm uninstall."
+            exit 0
+          fi
+
+          export CLUSTER_NAME
           export AWS_REGION="${{ env.AWS_REGION_VALUE }}"
 
           bash ./uninstall-helm.sh
 
-      # Before destroy, force cleanup of Kubernetes applications and load balancer resources.
       - name: Pre-Destroy Kubernetes Cleanup
         if: github.event.inputs.action == 'destroy'
         run: |
-          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "arealis-zord-eks")
+          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
+
+          if [ -z "${CLUSTER_NAME}" ]; then
+            echo "Could not determine cluster name. Skipping Kubernetes cleanup."
+            exit 0
+          fi
 
           if ! aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${{ env.AWS_REGION_VALUE }}" >/dev/null 2>&1; then
             echo "Cluster ${CLUSTER_NAME} not found. Skipping Kubernetes cleanup."
             exit 0
           fi
 
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-
           aws eks update-kubeconfig --region "${{ env.AWS_REGION_VALUE }}" --name "${CLUSTER_NAME}"
-
-          kubectl get ns || true
-          kubectl get svc -A || true
-          kubectl get ingress -A || true
 
           kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' > lb-services.txt || true
           kubectl get ingress -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' > ingress.txt || true
@@ -329,36 +289,24 @@ jobs:
 
           while read -r NAMESPACE; do
             [ -z "${NAMESPACE}" ] && continue
-            if [ "${NAMESPACE}" = "kube-system" ] || [ "${NAMESPACE}" = "kube-public" ] || [ "${NAMESPACE}" = "kube-node-lease" ] || [ "${NAMESPACE}" = "default" ]; then
-              continue
-            fi
-
+            case "${NAMESPACE}" in kube-system|kube-public|kube-node-lease|default) continue ;; esac
             kubectl delete namespace "${NAMESPACE}" --ignore-not-found=true --wait=false || true
           done < namespaces.txt
 
-          echo "Waiting for Kubernetes resources, load balancers, and ENIs to start deleting..."
+          echo "Waiting for load balancers and ENIs to clean up..."
           sleep 180
-
-          {
-            echo "## Pre-Destroy Cleanup"
-            echo ""
-            echo "- Cluster cleaned before Terraform destroy: ${CLUSTER_NAME}"
-            echo "- LoadBalancer services, ingresses, default workloads, and non-system namespaces were deleted first"
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Capture Destroy Subnet IDs
         if: github.event.inputs.action == 'destroy'
         run: |
-          terraform output -json private_subnet_ids > private-subnet-ids.json
-          terraform output -json public_subnet_ids > public-subnet-ids.json
+          terraform output -json private_subnet_ids > private-subnet-ids.json 2>/dev/null || echo '[]' > private-subnet-ids.json
+          terraform output -json public_subnet_ids > public-subnet-ids.json 2>/dev/null || echo '[]' > public-subnet-ids.json
 
-          jq -r '.[]' private-subnet-ids.json > subnet-ids.txt
-          jq -r '.[]' public-subnet-ids.json >> subnet-ids.txt
+          jq -r '.[]' private-subnet-ids.json > subnet-ids.txt 2>/dev/null || true
+          jq -r '.[]' public-subnet-ids.json >> subnet-ids.txt 2>/dev/null || true
 
-          # Capture resource count before destroy
           RESOURCE_COUNT=$(terraform show -json | jq '[.values.root_module.resources | length] | add // 0')
           echo "${RESOURCE_COUNT}" > resource-count.txt
-          echo "Resources to destroy: ${RESOURCE_COUNT}"
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
@@ -367,14 +315,12 @@ jobs:
         run: terraform destroy -auto-approve -no-color
 
       - name: Cleanup Available Network Interfaces
-        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome
-          == 'failure'
+        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome == 'failure'
         run: |
           touch eni-cleanup.txt
 
           while read -r SUBNET_ID; do
             [ -z "${SUBNET_ID}" ] && continue
-
             aws ec2 describe-network-interfaces \
               --filters "Name=subnet-id,Values=${SUBNET_ID}" "Name=status,Values=available" \
               --region "${{ env.AWS_REGION_VALUE }}" \
@@ -392,17 +338,8 @@ jobs:
               --region "${{ env.AWS_REGION_VALUE }}" || true
           done < eni-cleanup.txt
 
-          ENI_COUNT=$(grep -cve '^\s*$' eni-cleanup.txt || true)
-
-          {
-            echo "## Network Interface Cleanup"
-            echo ""
-            echo "- Available ENIs deleted before destroy retry: ${ENI_COUNT}"
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Retry Security Group Cleanup
-        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome
-          == 'failure'
+        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome == 'failure'
         run: |
           VPC_ID="$(terraform output -raw -no-color vpc_id 2>/dev/null | grep -Eo '^vpc-[0-9a-f]+' | head -n1 || true)"
           if [ -z "${VPC_ID}" ]; then
@@ -421,13 +358,11 @@ jobs:
 
           tr '\t' '\n' < sg-ids.txt | while read -r SG_ID; do
             [ -z "${SG_ID}" ] && continue
-            echo "Retry deleting security group: ${SG_ID}"
             aws ec2 delete-security-group --group-id "${SG_ID}" --region "${{ env.AWS_REGION_VALUE }}" || true
           done
 
       - name: Terraform Destroy Retry
-        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome
-          == 'failure'
+        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome == 'failure'
         run: terraform destroy -auto-approve -no-color
 
       - name: Destroy Summary
@@ -435,25 +370,10 @@ jobs:
         run: |
           RESOURCE_COUNT=$(cat resource-count.txt 2>/dev/null || echo "0")
           {
-            echo "## 🗑️ Congratulations! Your Entire Kubernetes Cluster Is Deleted"
+            echo "## 🗑️ ${{ github.event.inputs.environment }} Cluster Destroyed"
             echo ""
+            echo "**Environment: \`${{ github.event.inputs.environment }}\`**"
             echo "**Total resources deleted: ${RESOURCE_COUNT}**"
             echo ""
-            echo "---"
-            echo ""
-            echo "| Category | Resources Deleted |"
-            echo "|---|---|"
-            echo "| VPC, Subnets, IGW, NAT, EIP, Route Tables, SG | 15 |"
-            echo "| EKS Cluster, Node Group, Launch Template, ASG Tags | 6 |"
-            echo "| EKS Addons (vpc-cni, coredns, kube-proxy, pod-identity, ebs-csi) | 5 |"
-            echo "| EKS Access Entries + Policy Associations | 2 |"
-            echo "| IAM Roles, Policies, Attachments, Instance Profile | 15 |"
-            echo "| Pod Identity Associations | 2 |"
-            echo "| EC2 Jump Box | 1 |"
-            echo "| Cluster Autoscaler IAM + Pod Identity | 3 |"
-            echo "| OIDC Provider | 1 |"
-            echo ""
-            echo "---"
-            echo ""
-            echo "> Your AWS account is now clean. The S3 state bucket still exists — delete it manually if no longer needed."
+            echo "> State file: \`eks/${{ github.event.inputs.environment }}/terraform.tfstate\`"
           } >> "$GITHUB_STEP_SUMMARY"

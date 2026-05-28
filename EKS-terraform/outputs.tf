@@ -2,6 +2,11 @@
 # cluster outputs
 ############################
 
+output "environment" {
+  description = "Deployment environment (staging or production)."
+  value       = var.environment
+}
+
 output "cluster_name" {
   description = "EKS cluster name."
   value       = aws_eks_cluster.eks.name
