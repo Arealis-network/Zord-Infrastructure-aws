@@ -29,9 +29,11 @@ echo "Adding autoscaler Helm repo..."
 helm repo add autoscaler https://kubernetes.github.io/autoscaler
 helm repo update
 
-echo "Installing Cluster Autoscaler..."
+echo "Installing Cluster Autoscaler (pinned to match EKS 1.32)..."
 helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
   --namespace kube-system \
+  --version 9.43.2 \
+  --set image.tag=v1.32.0 \
   --set autoDiscovery.clusterName="${CLUSTER_NAME}" \
   --set awsRegion="${AWS_REGION}" \
   --set rbac.serviceAccount.name="cluster-autoscaler" \
