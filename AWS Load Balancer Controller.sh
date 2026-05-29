@@ -7,7 +7,7 @@ set -euo pipefail
 # Run this script from your EC2 jump box.
 # ---------------------------------------------------------------------------
 
-CLUSTER_NAME="arealis-zord-eks"
+CLUSTER_NAME="arealis-zord-prod-eks"  #changes cluster name
 AWS_REGION="ap-south-1"
 
 echo "Connecting to cluster: ${CLUSTER_NAME}"
