@@ -51,7 +51,8 @@ locals {
 
   external_secret_arns = [
     "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.app_secret_name}*",
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.edge_signing_key_secret_name}*"
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.edge_signing_key_secret_name}*",
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.evidence_signing_key_secret_name}*"
   ]
 
   # Use different CIDR ranges per environment so both can coexist in the same account

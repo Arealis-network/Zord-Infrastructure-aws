@@ -39,6 +39,12 @@ variable "edge_signing_key_secret_name" {
   default     = "zord/edge-signing-key"
 }
 
+variable "evidence_signing_key_secret_name" {
+  description = "AWS Secrets Manager secret name for the evidence signing key (without environment prefix)."
+  type        = string
+  default     = "zord/evidence-signing-key"
+}
+
 variable "kms_key_id" {
   description = "Optional customer-managed KMS key ARN or ID for secret encryption. Leave empty to use the default aws/secretsmanager key."
   type        = string

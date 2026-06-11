@@ -17,3 +17,13 @@ output "edge_signing_key_secret_arn" {
   description = "ARN of the edge signing key secret."
   value       = aws_secretsmanager_secret.this["edge_signing_key"].arn
 }
+
+output "evidence_signing_key_secret_name" {
+  description = "Name of the evidence signing key secret."
+  value       = aws_secretsmanager_secret.this["evidence_signing_key"].name
+}
+
+output "evidence_signing_key_secret_arn" {
+  description = "ARN of the evidence signing key secret."
+  value       = aws_secretsmanager_secret.this["evidence_signing_key"].arn
+}

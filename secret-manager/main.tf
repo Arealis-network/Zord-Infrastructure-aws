@@ -34,6 +34,10 @@ locals {
       name        = "${var.environment}/${var.edge_signing_key_secret_name}"
       description = "Edge signing private key for Arealis Zord (${var.environment})"
     }
+    evidence_signing_key = {
+      name        = "${var.environment}/${var.evidence_signing_key_secret_name}"
+      description = "Evidence signing private key for Arealis Zord (${var.environment})"
+    }
   }
 }
 

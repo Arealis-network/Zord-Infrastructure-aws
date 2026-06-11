@@ -68,3 +68,9 @@ variable "edge_signing_key_secret_name" {
   type        = string
   default     = "zord/edge-signing-key"
 }
+
+variable "evidence_signing_key_secret_name" {
+  description = "AWS Secrets Manager evidence signing key secret name consumed by External Secrets Operator."
+  type        = string
+  default     = "zord/evidence-signing-key"
+}
