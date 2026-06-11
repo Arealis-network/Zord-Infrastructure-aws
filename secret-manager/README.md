@@ -4,12 +4,14 @@ This folder is for AWS Secrets Manager.
 
 This Terraform code does **not** create your EKS cluster.
 
-This folder only creates these 2 AWS Secrets Manager secret containers per environment:
+This folder only creates these AWS Secrets Manager secret containers per environment:
 
 - `staging/zord/app-secrets`
 - `staging/zord/edge-signing-key`
+- `staging/zord/evidence-signing-key`
 - `production/zord/app-secrets`
 - `production/zord/edge-signing-key`
+- `production/zord/evidence-signing-key`
 
 Then GitHub Actions will put the real secret values inside them.
 
@@ -88,6 +90,8 @@ You need these GitHub secrets:
 - `ZORD_APP_SECRETS_JSON_PRODUCTION`
 - `ZORD_EDGE_SIGNING_KEY_JSON_STAGING`
 - `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION`
+- `ZORD_EVIDENCE_SIGNING_KEY_JSON_STAGING`
+- `ZORD_EVIDENCE_SIGNING_KEY_JSON_PRODUCTION`
 
 ## What Each GitHub Secret Means
 
@@ -211,6 +215,94 @@ Then click:
 `Add secret`
 
 Do the same for `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION` with your production key.
+
+## Step By Step: Add `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION`
+
+Click:
+
+`New repository secret`
+
+Secret name:
+
+```text
+ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION
+```
+
+Paste JSON like this:
+
+```json
+{
+  "ed25519_private.pem": "-----BEGIN PRIVATE KEY-----\nYOUR_PRODUCTION_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----"
+}
+```
+
+Then click:
+
+`Add secret`
+
+## Step By Step: Add `ZORD_EVIDENCE_SIGNING_KEY_JSON_STAGING`
+
+Click:
+
+`New repository secret`
+
+Secret name:
+
+```text
+ZORD_EVIDENCE_SIGNING_KEY_JSON_STAGING
+```
+
+Generate key first (run once):
+
+```bash
+openssl genpkey -algorithm Ed25519 -out /tmp/evidence_signing_key_staging.pem
+cat /tmp/evidence_signing_key_staging.pem
+```
+
+Paste JSON like this (replace with your generated key — use `\n` for newlines):
+
+```json
+{
+  "signing_key.pem": "-----BEGIN PRIVATE KEY-----\nYOUR_STAGING_EVIDENCE_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----"
+}
+```
+
+Then click:
+
+`Add secret`
+
+## Step By Step: Add `ZORD_EVIDENCE_SIGNING_KEY_JSON_PRODUCTION`
+
+Click:
+
+`New repository secret`
+
+Secret name:
+
+```text
+ZORD_EVIDENCE_SIGNING_KEY_JSON_PRODUCTION
+```
+
+Generate key first (run once):
+
+```bash
+openssl genpkey -algorithm Ed25519 -out /tmp/evidence_signing_key_production.pem
+cat /tmp/evidence_signing_key_production.pem
+```
+
+Paste JSON like this (replace with your generated key — use `\n` for newlines):
+
+```json
+{
+  "signing_key.pem": "-----BEGIN PRIVATE KEY-----\nYOUR_PRODUCTION_EVIDENCE_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----"
+}
+```
+
+Then click:
+
+`Add secret`
+
+**Important:** Never regenerate this key after deployment — old evidence packs won't be verifiable with a new key.
 
 ## Very Important About Private Key Format
 
@@ -411,7 +503,15 @@ You need to do only this:
    - `ZORD_APP_SECRETS_JSON_PRODUCTION`
    - `ZORD_EDGE_SIGNING_KEY_JSON_STAGING`
    - `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION`
+   - `ZORD_EVIDENCE_SIGNING_KEY_JSON_STAGING`
+   - `ZORD_EVIDENCE_SIGNING_KEY_JSON_PRODUCTION`
 2. Make sure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `TF_STATE_BUCKET` already exist
 3. Run GitHub Action with environment + apply
 
-After that, AWS Secrets Manager will contain your secret values for that environment.
+After that, AWS Secrets Manager will contain all secret values for that environment:
+
+| Secret | Created By | Used By |
+|--------|-----------|---------|
+| `production/zord/app-secrets` | Terraform + GitHub Actions | All services (env vars) |
+| `production/zord/edge-signing-key` | Terraform + GitHub Actions | zord-edge (file mount at `/run/secrets/ed25519_private.pem`) |
+| `production/zord/evidence-signing-key` | Terraform + GitHub Actions | zord-evidence (file mount at `/run/secrets/signing_key.pem`) |
