@@ -22,3 +22,11 @@ output "ses_send_role_arn" {
   description = "IAM role ARN used by workload pods to send SES emails."
   value       = aws_iam_role.ses_send_role.arn
 }
+
+output "ses_sender_emails" {
+  description = "Verified sender email addresses."
+  value = [
+    "support@${var.ses_domain}",
+    "no-reply@${var.ses_domain}"
+  ]
+}

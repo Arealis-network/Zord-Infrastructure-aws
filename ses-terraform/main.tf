@@ -50,6 +50,18 @@ resource "aws_ses_domain_mail_from" "this" {
 }
 
 ############################
+# SES EMAIL IDENTITIES
+############################
+
+resource "aws_ses_email_identity" "support" {
+  email = "support@${var.ses_domain}"
+}
+
+resource "aws_ses_email_identity" "no_reply" {
+  email = "no-reply@${var.ses_domain}"
+}
+
+############################
 # IAM - SES SEND ROLE
 ############################
 
@@ -68,7 +80,9 @@ resource "aws_iam_policy" "ses_send" {
           "ses:SendRawEmail"
         ]
         Resource = [
-          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_domain}"
+          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_domain}",
+          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/support@${var.ses_domain}",
+          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/no-reply@${var.ses_domain}"
         ]
       },
       {
