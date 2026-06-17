@@ -1,189 +1,220 @@
-# SES Terraform — Email OTP MFA
+# AWS SES Email Setup — OTP Verification
 
-This folder sets up AWS SES so your EKS pods can send OTP verification emails.
+This guide sets up AWS SES so your app can send OTP emails to users.
 
-## What It Creates
-
-- SES domain identity (`zordnet.com`)
-- DKIM configuration (email authentication)
-- MAIL FROM subdomain (`mail.zordnet.com`)
-- IAM policy allowing `ses:SendEmail` and `ses:SendRawEmail`
-- IAM role with EKS Pod Identity trust
-- Pod identity association linking the role to your workload service account
-
-## End-To-End Deployment (Step By Step)
-
-Follow these steps exactly in this order.
+SES code is now part of `EKS-terraform/main.tf`. This README is just the setup guide.
 
 ---
 
-### Step 1: Make sure your EKS cluster is running
-
-Your cluster must already exist before you run this.
-
-If you haven't deployed EKS yet:
+## How It Works
 
 ```
-GitHub → Actions → EKS Terraform → Run workflow → environment = production → action = apply
+User enters email on your website
+        ↓
+Your app generates OTP (e.g., 847291)
+        ↓
+Your app stores OTP in Redis (5 min expiry)
+        ↓
+Your app calls AWS SES:
+    FROM: no-reply@zordnet.com
+    TO: user@gmail.com
+    Body: "Your OTP is 847291"
+        ↓
+User gets email, types OTP on website
+        ↓
+Your app checks Redis → Login success
 ```
 
-If your cluster is already running, skip to Step 2.
+Your pods get SES permission automatically via EKS Pod Identity. No API keys in code.
 
 ---
 
-### Step 2: Push this code to GitHub
+## Current Status
 
-Make sure the `ses-terraform/` folder and `.github/workflows/ses-terraform.yml` are on the `main` branch.
-
-If not pushed yet:
-
-```bash
-git add -A
-git commit -m "Add SES Terraform module"
-git push origin main
-```
+| Item | Status |
+|---|---|
+| Domain `zordnet.com` | ✅ Verified |
+| Email `no-reply@zordnet.com` | ✅ Verified |
+| Email `support@zordnet.com` | ✅ Verified |
+| IAM role for pods | ✅ Created by EKS Terraform |
+| Pod Identity association | ✅ Linked to `zord-app` service account |
+| SES production access | ⚠️ You must request this (see below) |
 
 ---
 
-### Step 3: Run the SES workflow
+## Step 1: Request SES Production Access
+
+This is REQUIRED. Without this, your app can only send emails to verified addresses (not real users).
 
 1. Open your browser
-2. Go to: `https://github.com/Arealis-network/Zord-Infrastructure-aws`
-3. Click `Actions` tab
-4. On the left sidebar, click `SES Terraform`
-5. Click the blue button `Run workflow`
-6. Set:
-   - Environment: `production`
-   - Action: `apply`
-7. Click the green `Run workflow` button
+2. Go to: **AWS Console → SES**
+3. Left sidebar → click **Account dashboard**
+4. Click the blue button **"Request production access"**
+5. Fill in:
 
-Wait for it to finish (should take 1-2 minutes).
+| Field | Value |
+|---|---|
+| Mail type | **Transactional** |
+| Website URL | `https://zordnet.com` |
+| Use case description | Copy-paste the text below |
+
+**Use case text (copy this exactly):**
+
+```
+We send one-time password (OTP) verification codes to users during login and registration on our platform zordnet.com. Emails are sent from no-reply@zordnet.com. We expect low volume initially (under 1000 emails/day). Users explicitly request these emails by clicking "send code" on our login page. We do not send marketing or bulk emails.
+```
+
+6. Click **Submit**
+
+AWS reviews this in **24 hours**. They almost always approve transactional email requests.
+
+After approval: your app can send to ANY email in the world.
 
 ---
 
-### Step 4: Get the DNS records
+## Step 2: Add DNS Records (If Not Done Yet)
 
-After the workflow finishes:
+If you haven't added DNS records yet, get them from:
 
-1. Click on the completed run
-2. Scroll down to the bottom
-3. You will see a **summary section** with all the DNS records you need
+**AWS Console → SES → Identities → zordnet.com → Authentication tab**
 
-It will look something like this:
+Add these to your DNS provider:
 
-```
-Domain: zordnet.com
-Verification TXT: some-long-token-string
-DKIM tokens: abc123, def456, ghi789
-MAIL FROM: mail.zordnet.com
-```
+### Domain Verification (TXT)
 
----
-
-### Step 5: Add DNS records to your domain
-
-Go to wherever you manage `zordnet.com` DNS (Cloudflare, GoDaddy, Namecheap, Route 53, etc.)
-
-Add these records:
-
-#### Record 1: Domain Verification
-
-| Type | Host/Name | Value |
+| Type | Host | Value |
 |---|---|---|
-| TXT | `_amazonses.zordnet.com` | *(the verification token from Step 4)* |
+| TXT | `_amazonses.zordnet.com` | *(copy from SES Console)* |
 
-#### Records 2, 3, 4: DKIM (you get 3 tokens)
+### DKIM (3 CNAME records)
 
-For each DKIM token (let's call them `abc123`, `def456`, `ghi789`):
-
-| Type | Host/Name | Value |
+| Type | Host | Value |
 |---|---|---|
-| CNAME | `abc123._domainkey.zordnet.com` | `abc123.dkim.amazonses.com` |
-| CNAME | `def456._domainkey.zordnet.com` | `def456.dkim.amazonses.com` |
-| CNAME | `ghi789._domainkey.zordnet.com` | `ghi789.dkim.amazonses.com` |
+| CNAME | `<token1>._domainkey.zordnet.com` | `<token1>.dkim.amazonses.com` |
+| CNAME | `<token2>._domainkey.zordnet.com` | `<token2>.dkim.amazonses.com` |
+| CNAME | `<token3>._domainkey.zordnet.com` | `<token3>.dkim.amazonses.com` |
 
-#### Record 5: MAIL FROM MX
+### MAIL FROM (MX + SPF)
 
-| Type | Host/Name | Value | Priority |
-|---|---|---|---|
-| MX | `mail.zordnet.com` | `feedback-smtp.ap-south-1.amazonses.com` | 10 |
-
-#### Record 6: MAIL FROM SPF
-
-| Type | Host/Name | Value |
+| Type | Host | Value |
 |---|---|---|
+| MX | `mail.zordnet.com` | `10 feedback-smtp.ap-south-1.amazonses.com` |
 | TXT | `mail.zordnet.com` | `v=spf1 include:amazonses.com ~all` |
 
----
-
-### Step 6: Wait for verification
-
-After you add the DNS records:
-
-1. Go to AWS Console
-2. Go to: `SES → Verified identities`
-3. Click on `zordnet.com`
-4. Wait 5-10 minutes
-5. Status will change from `Pending` to `Verified`
-
-You don't need to do anything else. AWS checks DNS automatically.
+If all identities show "Verified" in SES Console, DNS is already done. Skip this step.
 
 ---
 
-### Step 7: Request SES production access (one-time)
+## Step 3: Give Developers Local Access
 
-New AWS accounts are in "sandbox mode" which means you can only send emails to verified email addresses.
+For developers to test OTP emails locally, they need an IAM user with SES permissions.
 
-To send emails to any address (your real users):
+### Create IAM User (one-time)
 
-1. Go to AWS Console
-2. Go to: `SES → Account dashboard`
-3. Click `Request production access`
-4. Fill in:
-   - Mail type: `Transactional`
-   - Website URL: your app URL
-   - Use case: "We send OTP verification codes to users during login and registration"
-5. Submit
+1. AWS Console → IAM → Users → Create user
+2. Name: `zord-dev-ses`
+3. Attach this inline policy:
 
-AWS reviews this in 24 hours. They almost always approve transactional email requests.
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ses:SendEmail", "ses:SendRawEmail"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+4. Create access key → "Application running outside AWS"
+5. Share credentials with developers
+
+### Developer `.env` File
+
+Developers add this to their local `.env`:
+
+```env
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=ap-south-1
+SES_FROM_EMAIL=no-reply@zordnet.com
+```
 
 ---
 
-### Step 8: Verify it works
+## Step 4: Handle Sandbox Limitation (Until Production Access Approved)
 
-SSH into your EC2 admin box and test:
+While waiting for production access (24 hours), developers can only send TO verified emails.
+
+To verify a developer's email:
+
+1. AWS Console → SES → Verified identities → Create identity
+2. Choose: **Email address**
+3. Enter: `developer@gmail.com`
+4. Developer clicks verification link in their inbox
+5. Done — SES can now send TO that email
+
+After production access is approved, this step is no longer needed.
+
+---
+
+## Step 5: Test It
+
+### From EC2 (quick test)
 
 ```bash
 aws ses send-email \
-  --from "noreply@zordnet.com" \
-  --destination "ToAddresses=your-email@gmail.com" \
+  --from "no-reply@zordnet.com" \
+  --destination "ToAddresses=your-verified-email@gmail.com" \
   --message "Subject={Data=Test OTP},Body={Text={Data=Your code is 123456}}" \
   --region ap-south-1
 ```
 
-If you're still in sandbox, the `--destination` email must be a verified email address. Add it in SES Console → Verified identities → Create identity → Email address.
+### From Developer's Machine
+
+```bash
+AWS_ACCESS_KEY_ID=AKIA... \
+AWS_SECRET_ACCESS_KEY=... \
+AWS_REGION=ap-south-1 \
+aws ses send-email \
+  --from "no-reply@zordnet.com" \
+  --destination "ToAddresses=your-verified-email@gmail.com" \
+  --message "Subject={Data=Test OTP},Body={Text={Data=Your code is 847291}}" \
+  --region ap-south-1
+```
+
+Check inbox. If you get the email, everything works.
 
 ---
 
-### Step 9: Your app sends emails automatically
+## How It Works In Production (Inside EKS)
 
-Your app pods running in:
-- Namespace: `zord`
-- Service account: `zord-app`
+Your app pods in EKS don't need any `.env` file or API keys.
 
-Already have SES permissions via Pod Identity. No API keys needed.
+```
+Pod (namespace: zord, service account: zord-app)
+        ↓
+EKS Pod Identity automatically injects AWS credentials
+        ↓
+App uses AWS SDK → ses.SendEmail()
+        ↓
+AWS SES delivers email to the user
+```
 
-Your app code just uses the AWS SDK:
+No secrets. No environment variables for AWS. Pod Identity handles it.
+
+### Example Go Code
 
 ```go
-// Go example — credentials are injected automatically by Pod Identity
 cfg, _ := config.LoadDefaultConfig(ctx, config.WithRegion("ap-south-1"))
 client := ses.NewFromConfig(cfg)
 
 client.SendEmail(ctx, &ses.SendEmailInput{
-    Source: aws.String("noreply@zordnet.com"),
+    Source: aws.String("no-reply@zordnet.com"),
     Destination: &types.Destination{
-        ToAddresses: []string{"user@example.com"},
+        ToAddresses: []string{"user@gmail.com"},
     },
     Message: &types.Message{
         Subject: &types.Content{Data: aws.String("Your Verification Code")},
@@ -194,92 +225,53 @@ client.SendEmail(ctx, &ses.SendEmailInput{
 
 ---
 
-## That's It!
+## Summary — What You Need To Do
 
-The full flow is:
+| # | Action | Time | One-time? |
+|---|---|---|---|
+| 1 | Request SES production access | 5 min (24h review) | Yes |
+| 2 | Add DNS records (if not done) | 5 min | Yes |
+| 3 | Create IAM user for developers | 5 min | Yes |
+| 4 | Verify developer emails (sandbox only) | 2 min each | Until production approved |
+| 5 | Test with `aws ses send-email` | 1 min | - |
 
-```
-1. Push code to GitHub                    (1 minute)
-2. Run SES Terraform apply                (1 minute)  
-3. Add 6 DNS records                      (5 minutes)
-4. Wait for SES verification              (5-10 minutes)
-5. Request production access              (24 hours, one-time)
-6. Your app can send OTP emails           ✓
-```
-
----
-
-## How To Destroy
-
-If you ever want to remove SES:
-
-1. GitHub → Actions → SES Terraform → Run workflow
-2. Environment: `production`
-3. Action: `destroy`
-4. confirm_destroy: `yes`
-5. Run
-
-Then delete the DNS records from your domain provider.
-
----
-
-## State Files
-
-| Environment | State Key |
-|---|---|
-| staging | `ses/staging/terraform.tfstate` |
-| production | `ses/production/terraform.tfstate` |
-
----
-
-## Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `environment` | `production` | staging or production |
-| `aws_region` | `ap-south-1` | AWS region |
-| `ses_domain` | `zordnet.com` | Domain for SES |
-| `eks_cluster_name` | *(auto from environment)* | Auto-derives: `arealis-zord-prod-eks` or `arealis-zord-stg-eks` |
-| `workload_namespace` | `zord` | K8s namespace of your app pods |
-| `workload_service_account` | `zord-app` | K8s service account of your app pods |
-
----
-
-## Local Commands (Optional)
-
-If you want to run Terraform from your machine instead of GitHub Actions:
-
-```bash
-cd ses-terraform
-
-terraform init \
-  -backend-config="bucket=<your-tf-state-bucket>" \
-  -backend-config="key=ses/production/terraform.tfstate" \
-  -backend-config="region=ap-south-1" \
-  -backend-config="encrypt=true"
-
-terraform plan -var="environment=production"
-terraform apply -var="environment=production"
-```
+After production access is approved and DNS is verified, your app can send OTP emails to anyone in the world.
 
 ---
 
 ## Troubleshooting
 
-**"Email address is not verified"**
-→ You're still in SES sandbox. Either verify the recipient email in SES Console, or request production access.
+| Problem | Fix |
+|---|---|
+| "Email address is not verified" | You're in sandbox. Verify the recipient email, or wait for production access |
+| "MessageRejected: Email address not verified" | Same as above — sandbox restriction |
+| "AccessDenied" from EC2 | Your EC2 has AdministratorAccess, should work. Check region matches |
+| "AccessDenied" from pod | Check service account is `zord-app` in namespace `zord` |
+| Email goes to spam | Add DKIM + SPF DNS records. Check "Authentication" tab in SES shows all green |
+| "Sending paused" | You hit the sandbox limit (200 emails/day). Request production access |
 
-**"Domain not verified"**
-→ DNS records not propagated yet. Wait 10 more minutes, or check if you added them correctly.
+---
 
-**"AccessDenied when sending from pod"**
-→ Check that your pod uses service account `zord-app` in namespace `zord`. Run:
-```bash
-kubectl get pod <pod-name> -n zord -o jsonpath='{.spec.serviceAccountName}'
-```
+## Available Sender Addresses
 
-**"Pod identity not working"**
-→ Make sure the `eks-pod-identity-agent` addon is running:
-```bash
-kubectl get pods -n kube-system | grep pod-identity
-```
+You can send from any of these:
+
+- `no-reply@zordnet.com` — for OTP codes (users shouldn't reply)
+- `support@zordnet.com` — for support emails (users can reply)
+- `anything@zordnet.com` — domain is verified, any address works
+
+---
+
+## Where The Code Lives
+
+SES Terraform resources are inside `EKS-terraform/main.tf` at the bottom (section: `SES EMAIL (OTP MFA)`).
+
+Variables in `EKS-terraform/variables.tf`:
+
+| Variable | Default |
+|---|---|
+| `ses_domain` | `zordnet.com` |
+| `ses_workload_namespace` | `zord` |
+| `ses_workload_service_account` | `zord-app` |
+
+Deploys automatically with `EKS Terraform → apply`. No separate workflow needed.
