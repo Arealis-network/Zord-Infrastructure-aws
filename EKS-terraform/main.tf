@@ -733,7 +733,7 @@ resource "aws_eks_access_policy_association" "ec2_admin_role" {
 
 resource "aws_instance" "eks" {
   ami                    = data.aws_ssm_parameter.amazon_linux_2023_ami.value
-  instance_type          = "t3.medium"
+  instance_type          = "t3.large"
   subnet_id              = aws_subnet.public1.id
   iam_instance_profile   = aws_iam_instance_profile.ec2_admin_profile.name
   vpc_security_group_ids = [aws_security_group.allow_all.id]
