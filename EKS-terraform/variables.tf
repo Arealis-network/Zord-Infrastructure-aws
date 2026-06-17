@@ -74,3 +74,25 @@ variable "evidence_signing_key_secret_name" {
   type        = string
   default     = "zord/evidence-signing-key"
 }
+
+############################
+# SES email settings
+############################
+
+variable "ses_domain" {
+  description = "Domain verified in AWS SES for sending OTP emails."
+  type        = string
+  default     = "zordnet.com"
+}
+
+variable "ses_workload_namespace" {
+  description = "Kubernetes namespace where the workload that sends emails runs."
+  type        = string
+  default     = "zord"
+}
+
+variable "ses_workload_service_account" {
+  description = "Kubernetes service account used by the workload that sends emails."
+  type        = string
+  default     = "zord-app"
+}

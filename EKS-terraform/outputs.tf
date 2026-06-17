@@ -56,9 +56,14 @@ output "private_subnet_ids" {
 # node group outputs
 ############################
 
-output "node_group_name" {
-  description = "Managed node group name."
-  value       = aws_eks_node_group.node_group.node_group_name
+output "stateful_node_group_name" {
+  description = "Stateful (on-demand) node group name."
+  value       = aws_eks_node_group.stateful.node_group_name
+}
+
+output "stateless_node_group_name" {
+  description = "Stateless (spot) node group name."
+  value       = aws_eks_node_group.stateless.node_group_name
 }
 
 output "node_role_arn" {
@@ -110,4 +115,28 @@ output "oidc_provider_arn" {
 output "oidc_provider_url" {
   description = "OIDC provider URL for the EKS cluster."
   value       = aws_iam_openid_connect_provider.eks.url
+}
+
+############################
+# ses output
+############################
+
+output "ses_domain" {
+  description = "SES domain identity."
+  value       = aws_ses_domain_identity.this.domain
+}
+
+output "ses_verification_token" {
+  description = "TXT record value for SES domain verification."
+  value       = aws_ses_domain_identity.this.verification_token
+}
+
+output "ses_dkim_tokens" {
+  description = "DKIM CNAME tokens for SES."
+  value       = aws_ses_domain_dkim.this.dkim_tokens
+}
+
+output "ses_send_role_arn" {
+  description = "IAM role ARN used by workload pods to send SES emails."
+  value       = aws_iam_role.ses_send_role.arn
 }

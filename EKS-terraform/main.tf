@@ -440,12 +440,12 @@ data "aws_eks_cluster_auth" "eks" {
 }
 
 ############################
-# NODE GROUP
+# NODE GROUP - STATEFUL (on-demand)
 ############################
 
-resource "aws_launch_template" "node_group" {
+resource "aws_launch_template" "stateful" {
 
-  name_prefix            = "${local.node_group_name}-"
+  name_prefix            = "${local.node_group_name}-stateful-"
   update_default_version = true
 
   metadata_options {
@@ -458,7 +458,7 @@ resource "aws_launch_template" "node_group" {
     resource_type = "instance"
 
     tags = {
-      Name = "${local.eks_name_prefix} cluster node"
+      Name = "${local.eks_name_prefix} stateful node"
     }
   }
 
@@ -466,19 +466,19 @@ resource "aws_launch_template" "node_group" {
     resource_type = "volume"
 
     tags = {
-      Name = "${local.eks_name_prefix} cluster node volume"
+      Name = "${local.eks_name_prefix} stateful node volume"
     }
   }
 
   tags = {
-    Name = "${local.eks_name_prefix} node launch template"
+    Name = "${local.eks_name_prefix} stateful launch template"
   }
 }
 
-resource "aws_eks_node_group" "node_group" {
+resource "aws_eks_node_group" "stateful" {
 
   cluster_name    = aws_eks_cluster.eks.name
-  node_group_name = local.node_group_name
+  node_group_name = "${local.node_group_name}-stateful"
 
   node_role_arn = aws_iam_role.worker_role.arn
   version       = var.cluster_version
@@ -488,19 +488,27 @@ resource "aws_eks_node_group" "node_group" {
     aws_subnet.private2.id
   ]
 
-
-  instance_types = ["t3.medium"]
+  instance_types = ["t3.xlarge"]
 
   scaling_config {
+    desired_size = 1
+    max_size     = 3
+    min_size     = 1
+  }
 
-    desired_size = 3
-    max_size     = 20
-    min_size     = 3
+  labels = {
+    workload = "stateful"
+  }
+
+  taint {
+    key    = "workload"
+    value  = "stateful"
+    effect = "NO_SCHEDULE"
   }
 
   launch_template {
-    id      = aws_launch_template.node_group.id
-    version = aws_launch_template.node_group.latest_version
+    id      = aws_launch_template.stateful.id
+    version = aws_launch_template.stateful.latest_version
   }
 
   depends_on = [
@@ -508,25 +516,104 @@ resource "aws_eks_node_group" "node_group" {
     aws_iam_role_policy_attachment.cni,
     aws_iam_role_policy_attachment.ecr
   ]
+
   tags = {
-    Name = "${local.eks_name_prefix} node group"
+    Name = "${local.eks_name_prefix} stateful node group"
   }
 }
 
-resource "aws_autoscaling_group_tag" "node_instance_name" {
+############################
+# NODE GROUP - STATELESS (spot)
+############################
 
-  autoscaling_group_name = aws_eks_node_group.node_group.resources[0].autoscaling_groups[0].name
+resource "aws_launch_template" "stateless" {
+
+  name_prefix            = "${local.node_group_name}-stateless-"
+  update_default_version = true
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = {
+      Name = "${local.eks_name_prefix} stateless node"
+    }
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+
+    tags = {
+      Name = "${local.eks_name_prefix} stateless node volume"
+    }
+  }
+
+  tags = {
+    Name = "${local.eks_name_prefix} stateless launch template"
+  }
+}
+
+resource "aws_eks_node_group" "stateless" {
+
+  cluster_name    = aws_eks_cluster.eks.name
+  node_group_name = "${local.node_group_name}-stateless"
+
+  node_role_arn = aws_iam_role.worker_role.arn
+  version       = var.cluster_version
+
+  subnet_ids = [
+    aws_subnet.private1.id,
+    aws_subnet.private2.id
+  ]
+
+  instance_types = ["t3.large", "t3.xlarge", "m5.large"]
+  capacity_type  = "SPOT"
+
+  scaling_config {
+    desired_size = 1
+    max_size     = 5
+    min_size     = 1
+  }
+
+  labels = {
+    workload = "stateless"
+  }
+
+  launch_template {
+    id      = aws_launch_template.stateless.id
+    version = aws_launch_template.stateless.latest_version
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.worker_node,
+    aws_iam_role_policy_attachment.cni,
+    aws_iam_role_policy_attachment.ecr
+  ]
+
+  tags = {
+    Name = "${local.eks_name_prefix} stateless node group"
+  }
+}
+
+resource "aws_autoscaling_group_tag" "stateful_instance_name" {
+
+  autoscaling_group_name = aws_eks_node_group.stateful.resources[0].autoscaling_groups[0].name
 
   tag {
     key                 = "Name"
-    value               = "${local.eks_name_prefix} cluster node"
+    value               = "${local.eks_name_prefix} stateful node"
     propagate_at_launch = true
   }
 }
 
-resource "aws_autoscaling_group_tag" "cluster_autoscaler_owned" {
+resource "aws_autoscaling_group_tag" "stateful_autoscaler_owned" {
 
-  autoscaling_group_name = aws_eks_node_group.node_group.resources[0].autoscaling_groups[0].name
+  autoscaling_group_name = aws_eks_node_group.stateful.resources[0].autoscaling_groups[0].name
 
   tag {
     key                 = "k8s.io/cluster-autoscaler/${local.cluster_name}"
@@ -535,9 +622,42 @@ resource "aws_autoscaling_group_tag" "cluster_autoscaler_owned" {
   }
 }
 
-resource "aws_autoscaling_group_tag" "cluster_autoscaler_enabled" {
+resource "aws_autoscaling_group_tag" "stateful_autoscaler_enabled" {
 
-  autoscaling_group_name = aws_eks_node_group.node_group.resources[0].autoscaling_groups[0].name
+  autoscaling_group_name = aws_eks_node_group.stateful.resources[0].autoscaling_groups[0].name
+
+  tag {
+    key                 = "k8s.io/cluster-autoscaler/enabled"
+    value               = "true"
+    propagate_at_launch = false
+  }
+}
+
+resource "aws_autoscaling_group_tag" "stateless_instance_name" {
+
+  autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
+
+  tag {
+    key                 = "Name"
+    value               = "${local.eks_name_prefix} stateless node"
+    propagate_at_launch = true
+  }
+}
+
+resource "aws_autoscaling_group_tag" "stateless_autoscaler_owned" {
+
+  autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
+
+  tag {
+    key                 = "k8s.io/cluster-autoscaler/${local.cluster_name}"
+    value               = "owned"
+    propagate_at_launch = false
+  }
+}
+
+resource "aws_autoscaling_group_tag" "stateless_autoscaler_enabled" {
+
+  autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
 
   tag {
     key                 = "k8s.io/cluster-autoscaler/enabled"
@@ -613,13 +733,13 @@ resource "aws_eks_access_policy_association" "ec2_admin_role" {
 
 resource "aws_instance" "eks" {
   ami                         = data.aws_ssm_parameter.amazon_linux_2023_ami.value
-  instance_type               = "t2.xlarge"
+  instance_type               = "t3.medium"
   subnet_id                   = aws_subnet.public1.id
   iam_instance_profile        = aws_iam_instance_profile.ec2_admin_profile.name
   vpc_security_group_ids      = [aws_security_group.allow_all.id]
   user_data_replace_on_change = true
   root_block_device {
-    volume_size = "60"
+    volume_size = "40"
   }
 
 
@@ -641,7 +761,7 @@ resource "aws_eks_addon" "vpc_cni" {
 
   resolve_conflicts_on_update = "OVERWRITE"
 
-  depends_on = [aws_eks_node_group.node_group]
+  depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
 }
 
 resource "aws_eks_addon" "coredns" {
@@ -651,7 +771,7 @@ resource "aws_eks_addon" "coredns" {
 
   resolve_conflicts_on_update = "OVERWRITE"
 
-  depends_on = [aws_eks_node_group.node_group]
+  depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
 }
 
 resource "aws_eks_addon" "kube_proxy" {
@@ -661,7 +781,7 @@ resource "aws_eks_addon" "kube_proxy" {
 
   resolve_conflicts_on_update = "OVERWRITE"
 
-  depends_on = [aws_eks_node_group.node_group]
+  depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
 }
 
 resource "aws_eks_addon" "pod_identity" {
@@ -671,7 +791,7 @@ resource "aws_eks_addon" "pod_identity" {
 
   resolve_conflicts_on_update = "OVERWRITE"
 
-  depends_on = [aws_eks_node_group.node_group]
+  depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
 }
 
 
@@ -723,7 +843,8 @@ resource "aws_eks_addon" "ebs_csi" {
   resolve_conflicts_on_update = "OVERWRITE"
 
   depends_on = [
-    aws_eks_node_group.node_group,
+    aws_eks_node_group.stateful,
+    aws_eks_node_group.stateless,
     aws_eks_pod_identity_association.ebs_csi
   ]
 }
@@ -881,6 +1002,109 @@ resource "aws_eks_pod_identity_association" "external_secrets" {
 
   depends_on = [
     aws_iam_role_policy_attachment.external_secrets,
+    aws_eks_addon.pod_identity
+  ]
+}
+
+############################
+# SES EMAIL (OTP MFA)
+############################
+
+resource "aws_ses_domain_identity" "this" {
+  domain = var.ses_domain
+}
+
+resource "aws_ses_domain_dkim" "this" {
+  domain = aws_ses_domain_identity.this.domain
+}
+
+resource "aws_ses_domain_mail_from" "this" {
+  domain           = aws_ses_domain_identity.this.domain
+  mail_from_domain = "mail.${var.ses_domain}"
+}
+
+resource "aws_ses_email_identity" "support" {
+  email = "support@${var.ses_domain}"
+}
+
+resource "aws_ses_email_identity" "no_reply" {
+  email = "no-reply@${var.ses_domain}"
+}
+
+resource "aws_iam_policy" "ses_send" {
+
+  name        = "${local.eks_resource_prefix}-ses-send-policy"
+  description = "Allows workload pods to send emails via SES for OTP MFA"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail"
+        ]
+        Resource = [
+          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_domain}",
+          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/support@${var.ses_domain}",
+          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/no-reply@${var.ses_domain}"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:GetSendQuota",
+          "ses:GetSendStatistics"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = {
+    Name = "${local.eks_name_prefix} ses send policy"
+  }
+}
+
+resource "aws_iam_role" "ses_send_role" {
+
+  name = "${local.eks_resource_prefix}-ses-send-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "pods.eks.amazonaws.com"
+      }
+      Action = [
+        "sts:AssumeRole",
+        "sts:TagSession"
+      ]
+    }]
+  })
+
+  tags = {
+    Name = "${local.eks_name_prefix} ses send role"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ses_send" {
+
+  role       = aws_iam_role.ses_send_role.name
+  policy_arn = aws_iam_policy.ses_send.arn
+}
+
+resource "aws_eks_pod_identity_association" "ses_send" {
+  cluster_name    = aws_eks_cluster.eks.name
+  namespace       = var.ses_workload_namespace
+  service_account = var.ses_workload_service_account
+
+  role_arn = aws_iam_role.ses_send_role.arn
+
+  depends_on = [
+    aws_iam_role_policy_attachment.ses_send,
     aws_eks_addon.pod_identity
   ]
 }
