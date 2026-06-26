@@ -279,6 +279,46 @@ http://<EC2-PUBLIC-IP>:7771
 
 SonarQube runs in Docker with port mapping `7771 -> 9000`.
 
+## EC2 Auto-Stop Schedule
+
+The admin EC2 instance automatically stops at night and starts in the morning to save cost:
+
+| Action | Time (IST) | Days |
+|---|---|---|
+| Stop | 10:00 PM | Every day |
+| Start | 9:00 AM | Monday to Friday |
+
+Stays stopped all weekend (Friday 10 PM → Monday 9 AM).
+
+When it starts, Jenkins and SonarQube come back automatically — no commands needed.
+
+**Important:** The EC2 public IP may change after stop/start. To find the new IP:
+
+```bash
+aws ec2 describe-instances --region ap-south-1 --filters "Name=tag:Name,Values=*admin*" "Name=instance-state-name,Values=running" --query 'Reservations[*].Instances[*].PublicIpAddress' --output text
+```
+
+Or check in AWS Console → EC2 → your instance → Public IPv4 address.
+
+If you need Jenkins on a weekend, manually start the instance from AWS Console.
+
+## What Works When EC2 Admin Is Stopped
+
+The admin EC2 only runs Jenkins and SonarQube. Your application runs entirely on EKS and pulls Docker images from ECR — not from the EC2.
+
+| Question | Answer |
+|---|---|
+| App keeps running? | ✅ Yes |
+| Pods restart successfully? | ✅ Yes (images are in ECR) |
+| HPA scales up new pods? | ✅ Yes |
+| Grafana / Kibana / Jaeger accessible? | ✅ Yes (runs in EKS) |
+| Users can use the website? | ✅ Yes |
+| Can deploy NEW code? | ❌ No (need Jenkins to build + push) |
+| Can access Jenkins? | ❌ No (stopped) |
+| Can access SonarQube? | ❌ No (stopped) |
+
+Your existing application runs 24/7 regardless of the EC2 instance state.
+
 ![SonarQube](EKS-terraform/images/sonaroube.png)
 
 ## Jenkins Initial Admin Password
@@ -335,4 +375,99 @@ sudo cat /var/log/tool-bootstrap.log
 - The S3 bucket must exist before running any workflow
 - Jenkins and SonarQube are started by `EKS-terraform/tool.sh`
 - External Secrets Operator is installed by the EKS workflow after apply
-- If `tool.sh` changes, Terraform replaces the EC2 instance and reruns bootstrap
+- If `tool.sh` changes, Terraform ignores it (EC2 is protected from recreation)
+
+---
+
+## How Auto-Scaling Works
+
+The infrastructure automatically scales up when users come and scales down when they leave. You don't touch anything.
+
+### At Rest (no traffic):
+
+```
+Stateful Node (t3.xlarge, always on):
+├── Postgres (1 pod)
+├── Kafka (1 pod)
+└── Redis (1 pod)
+
+Spot Node 1 (t3.large):
+├── Kong × 2 (always 2)
+├── zord-edge × 2 (always 2)
+├── zord-console × 1
+├── zord-relay × 1
+└── FluentBit + node-exporter
+
+Spot Node 2 (t3.large):
+├── zord-intent-engine × 1
+├── zord-outcome-engine × 1
+├── zord-evidence × 1
+├── zord-intelligence × 1
+├── zord-prompt-layer × 1
+├── zord-token-enclave × 1
+├── ML service × 1
+└── FluentBit + node-exporter
+
+Admin EC2 (t3.large, separate):
+├── Jenkins
+└── SonarQube
+
+Total: 3 EKS nodes + 1 admin = ~$18/day
+```
+
+### During Traffic Spike:
+
+```
+Users → ALB → Kong → zord-edge (CPU goes above 70%)
+                          ↓
+                    HPA scales pods: 2 → 3 → 4
+                          ↓
+                    Pods need space
+                          ↓
+                    Autoscaler adds Spot Node 3 (1-2 min)
+                          ↓
+                    Pods schedule, users get fast response
+```
+
+### When Traffic Drops:
+
+```
+HPA sees low CPU for 5 minutes
+          ↓
+Scales down: zord-edge 4 → 3 → 2
+          ↓
+Spot Node 3 becomes empty
+          ↓
+Autoscaler removes it after 2 minutes
+          ↓
+Back to 2 spot nodes, cost drops
+```
+
+### The Chain:
+
+```
+User traffic → Pod CPU ↑ → HPA scales pods ↑ → Autoscaler adds nodes ↑ → Bill goes up
+No traffic   → Pod CPU ↓ → HPA removes pods ↓ → Autoscaler removes nodes ↓ → Bill goes down
+```
+
+---
+
+## Cost Optimization
+
+| Strategy | Implementation |
+|---|---|
+| Spot instances for stateless workloads | 60-70% cheaper than on-demand |
+| HPA min=1 for non-critical services | Only run what's needed |
+| HPA min=2 only for Kong + zord-edge | Entry points need instant availability |
+| Cluster Autoscaler | Adds/removes nodes based on demand |
+| Stateful node (on-demand) | Databases stay stable, never interrupted |
+| EC2 lifecycle protection | Admin instance never destroyed on apply |
+
+### Expected Cost:
+
+| Period | Idle | Under Load |
+|---|---|---|
+| Daily | ~$18 | ~$25-35 |
+| Monthly | ~$540 | ~$750-1000 |
+
+The system auto-adjusts. You pay for what you use.

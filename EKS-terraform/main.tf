@@ -752,6 +752,92 @@ resource "aws_instance" "eks" {
     ignore_changes = [user_data, ami]
   }
 }
+
+############################
+# EC2 AUTO-STOP SCHEDULE
+############################
+
+resource "aws_scheduler_schedule" "ec2_stop" {
+  name       = "${local.eks_resource_prefix}-ec2-stop-night"
+  group_name = "default"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  # Stop at 10 PM IST (4:30 PM UTC) every day
+  schedule_expression          = "cron(30 16 * * ? *)"
+  schedule_expression_timezone = "Asia/Kolkata"
+
+  target {
+    arn      = "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
+    role_arn = aws_iam_role.scheduler_role.arn
+
+    input = jsonencode({
+      InstanceIds = [aws_instance.eks.id]
+    })
+  }
+}
+
+resource "aws_scheduler_schedule" "ec2_start" {
+  name       = "${local.eks_resource_prefix}-ec2-start-morning"
+  group_name = "default"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  # Start at 9 AM IST (3:30 AM UTC) every weekday (Mon-Fri)
+  schedule_expression          = "cron(30 3 ? * MON-FRI *)"
+  schedule_expression_timezone = "Asia/Kolkata"
+
+  target {
+    arn      = "arn:aws:scheduler:::aws-sdk:ec2:startInstances"
+    role_arn = aws_iam_role.scheduler_role.arn
+
+    input = jsonencode({
+      InstanceIds = [aws_instance.eks.id]
+    })
+  }
+}
+
+resource "aws_iam_role" "scheduler_role" {
+
+  name = "${local.eks_resource_prefix}-scheduler-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "scheduler.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    Name = "${local.eks_name_prefix} scheduler role"
+  }
+}
+
+resource "aws_iam_role_policy" "scheduler_ec2" {
+
+  name = "${local.eks_resource_prefix}-scheduler-ec2-policy"
+  role = aws_iam_role.scheduler_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ec2:StartInstances",
+        "ec2:StopInstances"
+      ]
+      Resource = aws_instance.eks.arn
+    }]
+  })
+}
 ############################
 # EKS ADDONS
 ############################
