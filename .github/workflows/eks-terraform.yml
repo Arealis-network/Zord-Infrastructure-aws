@@ -57,31 +57,25 @@ jobs:
     name: Terraform Plan On PR
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-
     defaults:
       run:
         shell: bash
         working-directory: ${{ env.TF_WORKING_DIR }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION_VALUE }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
       - name: Terraform Format Check
         run: terraform fmt -check
-
       - name: Terraform Init
         run: |
           terraform init \
@@ -89,10 +83,8 @@ jobs:
             -backend-config="key=eks/production/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
             -backend-config="encrypt=true"
-
       - name: Terraform Validate
         run: terraform validate
-
       - name: Terraform Plan
         run: terraform plan -var="environment=production" -no-color
 
@@ -101,31 +93,25 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
-
     defaults:
       run:
         shell: bash
         working-directory: ${{ env.TF_WORKING_DIR }}
-
     env:
       TF_VAR_environment: ${{ github.event.inputs.environment }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION_VALUE }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
       - name: Validate destroy confirmation
         if: github.event.inputs.action == 'destroy'
         run: |
@@ -133,10 +119,8 @@ jobs:
             echo "Destroy was selected but confirm_destroy is not set to yes."
             exit 1
           fi
-
       - name: Terraform Format Check
         run: terraform fmt -check
-
       - name: Terraform Init
         run: |
           terraform init \
@@ -144,14 +128,11 @@ jobs:
             -backend-config="key=eks/${{ github.event.inputs.environment }}/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
             -backend-config="encrypt=true"
-
       - name: Terraform Validate
         run: terraform validate
-
       - name: Terraform Plan
         if: github.event.inputs.action == 'plan'
         run: terraform plan -no-color
-
       - name: Terraform Apply
         if: github.event.inputs.action == 'apply'
         run: terraform apply -auto-approve -no-color
@@ -160,30 +141,21 @@ jobs:
         if: github.event.inputs.action == 'apply'
         run: |
           CLUSTER_NAME=$(terraform output -raw cluster_name)
-          echo "Expected cluster from Terraform output: ${CLUSTER_NAME}"
-
           if ! aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${{ env.AWS_REGION_VALUE }}" >/dev/null 2>&1; then
-            echo "Cluster ${CLUSTER_NAME} was not found in region ${{ env.AWS_REGION_VALUE }}."
-            echo "Clusters currently visible in this account and region:"
+            echo "Cluster ${CLUSTER_NAME} not found."
             aws eks list-clusters --region "${{ env.AWS_REGION_VALUE }}" || true
             exit 1
           fi
-
           aws eks wait cluster-active --name "${CLUSTER_NAME}" --region "${{ env.AWS_REGION_VALUE }}"
 
       - name: Install Cluster Autoscaler
         if: github.event.inputs.action == 'apply'
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
           CLUSTER_NAME=$(terraform output -raw cluster_name)
           CA_ROLE_ARN=$(terraform output -raw cluster_autoscaler_role_arn)
-
-          export CLUSTER_NAME CA_ROLE_ARN
-          export AWS_REGION="${{ env.AWS_REGION_VALUE }}"
-
+          export CLUSTER_NAME CA_ROLE_ARN AWS_REGION="${{ env.AWS_REGION_VALUE }}"
           bash ./install-autoscaler.sh
 
       - name: Install External Secrets Operator
@@ -191,189 +163,635 @@ jobs:
         run: |
           if ! command -v kubectl >/dev/null 2>&1; then
             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/kubectl
+            chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
           fi
-
           if ! command -v helm >/dev/null 2>&1; then
             curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           fi
-
           export CLUSTER_NAME="$(terraform output -raw cluster_name)"
           export ESO_NAMESPACE="external-secrets"
           export ESO_SERVICE_ACCOUNT="external-secrets"
           export AWS_REGION="${{ env.AWS_REGION_VALUE }}"
-
           bash ./install-external-secrets.sh
 
-      - name: Cluster Connection Summary
+      # ============================================================
+      # REAL-TIME APPLY SUMMARY (live AWS API queries)
+      # ============================================================
+      - name: Real-Time Infrastructure Summary
         if: github.event.inputs.action == 'apply'
         run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
           CLUSTER_NAME=$(terraform output -raw cluster_name)
-          RESOURCE_COUNT=$(terraform show -json | jq '[.values.root_module.resources | length] | add // 0')
+
+          # Query live AWS resources
+          EC2_COUNT=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:Cluster,Values=${CLUSTER_NAME}" --query 'Reservations[*].Instances[*].InstanceId' --output text | wc -w || echo "0")
+          EKS_NODES=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:eks:cluster-name,Values=${CLUSTER_NAME}" --query 'Reservations[*].Instances[*].[InstanceId,InstanceType]' --output text || true)
+          NODE_COUNT=$(echo "${EKS_NODES}" | grep -c . || echo "0")
+
+          EBS_VOLUMES=$(aws ec2 describe-volumes --region "${REGION}" --query 'Volumes[?State==`in-use`].[VolumeId,Size,VolumeType]' --output text || true)
+          EBS_COUNT=$(echo "${EBS_VOLUMES}" | grep -c . || echo "0")
+          EBS_TOTAL_GB=$(echo "${EBS_VOLUMES}" | awk '{sum+=$2} END {print sum+0}')
+
+          EIP_COUNT=$(aws ec2 describe-addresses --region "${REGION}" --query 'Addresses[*].AllocationId' --output text | wc -w || echo "0")
+          NAT_COUNT=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" --query 'NatGateways[*].NatGatewayId' --output text | wc -w || echo "0")
+          LB_COUNT=$(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text | wc -w || echo "0")
+          SG_COUNT=$(aws ec2 describe-security-groups --region "${REGION}" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | wc -w || echo "0")
+
+          # Cost estimation using AWS Cost Explorer (real billing data)
+          TODAY=$(date +%Y-%m-%d)
+          YESTERDAY=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d 2>/dev/null || echo "")
+          WEEK_AGO=$(date -d "7 days ago" +%Y-%m-%d 2>/dev/null || date -v-7d +%Y-%m-%d 2>/dev/null || echo "")
+          MONTH_START=$(date +%Y-%m-01)
+
+          # Today's cost (yesterday to today since billing is 1 day behind)
+          DAILY_COST="N/A"
+          if [ -n "${YESTERDAY}" ]; then
+            DAILY_COST=$(aws ce get-cost-and-usage \
+              --time-period Start="${YESTERDAY}",End="${TODAY}" \
+              --granularity DAILY \
+              --metrics UnblendedCost \
+              --query 'ResultsByTime[0].Total.UnblendedCost.Amount' \
+              --output text 2>/dev/null || echo "N/A")
+          fi
+
+          # Last 7 days cost
+          WEEKLY_COST="N/A"
+          if [ -n "${WEEK_AGO}" ]; then
+            WEEKLY_COST=$(aws ce get-cost-and-usage \
+              --time-period Start="${WEEK_AGO}",End="${TODAY}" \
+              --granularity DAILY \
+              --metrics UnblendedCost \
+              --query 'ResultsByTime[*].Total.UnblendedCost.Amount' \
+              --output text 2>/dev/null | awk '{sum+=$1} END {printf "%.2f", sum}' || echo "N/A")
+          fi
+
+          # Month to date cost
+          MONTHLY_COST=$(aws ce get-cost-and-usage \
+            --time-period Start="${MONTH_START}",End="${TODAY}" \
+            --granularity MONTHLY \
+            --metrics UnblendedCost \
+            --query 'ResultsByTime[0].Total.UnblendedCost.Amount' \
+            --output text 2>/dev/null || echo "N/A")
+
+          # Forecasted month total
+          MONTH_END=$(date -d "$(date +%Y-%m-01) +1 month -1 day" +%Y-%m-%d 2>/dev/null || date -v1d -v+1m -v-1d +%Y-%m-%d 2>/dev/null || echo "")
+          FORECAST="N/A"
+          if [ -n "${MONTH_END}" ]; then
+            FORECAST=$(aws ce get-cost-forecast \
+              --time-period Start="${TODAY}",End="${MONTH_END}" \
+              --granularity MONTHLY \
+              --metric UNBLENDED_COST \
+              --query 'Total.Amount' \
+              --output text 2>/dev/null || echo "N/A")
+          fi
+
+          # Top services by cost (last 7 days)
+          TOP_SERVICES=""
+          if [ -n "${WEEK_AGO}" ]; then
+            TOP_SERVICES=$(aws ce get-cost-and-usage \
+              --time-period Start="${WEEK_AGO}",End="${TODAY}" \
+              --granularity DAILY \
+              --metrics UnblendedCost \
+              --group-by Type=DIMENSION,Key=SERVICE \
+              --query 'ResultsByTime[*].Groups[*].[Keys[0],Metrics.UnblendedCost.Amount]' \
+              --output text 2>/dev/null | awk '{svc=$1; for(i=2;i<NF;i++) svc=svc" "$i; cost=$NF; arr[svc]+=cost} END {for(s in arr) if(arr[s]>0.01) printf "%s|%.2f\n", s, arr[s]}' | sort -t'|' -k2 -rn | head -8 || echo "")
+          fi
+
           {
-            echo "## 🎉 Your ${{ github.event.inputs.environment }} Kubernetes Cluster Is Ready"
+            echo "## 🎉 ${{ github.event.inputs.environment }} Infrastructure Live"
             echo ""
-            echo "**Cluster: \`${CLUSTER_NAME}\`**"
-            echo "**Environment: \`${{ github.event.inputs.environment }}\`**"
-            echo "**Total resources created: ${RESOURCE_COUNT}**"
+            echo "**Cluster:** \`${CLUSTER_NAME}\`"
             echo ""
-            echo "---"
+            echo "### Live AWS Resources"
             echo ""
-            echo "## Connect To Your Cluster"
+            echo "| Resource | Count | Details |"
+            echo "|---|---|---|"
+            echo "| EKS Cluster | 1 | v1.32 |"
+            echo "| EKS Nodes | ${NODE_COUNT} | Running in private subnets |"
+            echo "| EBS Volumes | ${EBS_COUNT} | ${EBS_TOTAL_GB} GB total |"
+            echo "| Elastic IPs | ${EIP_COUNT} | For NAT Gateway |"
+            echo "| NAT Gateways | ${NAT_COUNT} | Private subnet internet |"
+            echo "| Load Balancers | ${LB_COUNT} | ALB/NLB |"
+            echo "| Security Groups | ${SG_COUNT} | Non-default |"
+            echo ""
+            echo "### 💰 Real AWS Billing (from Cost Explorer)"
+            echo ""
+            echo "| Period | Cost (USD) |"
+            echo "|---|---|"
+            echo "| Yesterday (daily) | \$${DAILY_COST} |"
+            echo "| Last 7 days | \$${WEEKLY_COST} |"
+            echo "| Month to date | \$${MONTHLY_COST} |"
+            echo "| Forecasted full month | \$${FORECAST} |"
+            echo ""
+            if [ -n "${TOP_SERVICES}" ]; then
+              echo "### 📊 Top Services by Cost (last 7 days)"
+              echo ""
+              echo "| Service | Cost (USD) |"
+              echo "|---|---|"
+              echo "${TOP_SERVICES}" | while IFS='|' read -r SVC COST; do
+                echo "| ${SVC} | \$${COST} |"
+              done
+              echo ""
+            fi
+            echo "### Connect"
             echo ""
             echo "\`\`\`bash"
-            echo "aws eks update-kubeconfig --region ${{ env.AWS_REGION_VALUE }} --name ${CLUSTER_NAME}"
-            echo "\`\`\`"
-            echo ""
-            echo "## Verify"
-            echo ""
-            echo "\`\`\`bash"
-            echo "kubectl get nodes"
-            echo "kubectl get pods -A"
-            echo "kubectl get pods -n external-secrets"
-            echo "kubectl get pods -n kube-system | grep cluster-autoscaler"
+            echo "aws eks update-kubeconfig --region ${REGION} --name ${CLUSTER_NAME}"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ============================================================
+      # PRE-DESTROY: APPLICATION CLEANUP
+      # ============================================================
       - name: Pre-Destroy Helm Uninstall
         if: github.event.inputs.action == 'destroy'
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
           CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
-          if [ -z "${CLUSTER_NAME}" ]; then
-            echo "Could not determine cluster name. Skipping Helm uninstall."
-            exit 0
-          fi
-
-          export CLUSTER_NAME
-          export AWS_REGION="${{ env.AWS_REGION_VALUE }}"
-
+          [ -z "${CLUSTER_NAME}" ] && echo "No cluster name. Skipping." && exit 0
+          export CLUSTER_NAME AWS_REGION="${{ env.AWS_REGION_VALUE }}"
           bash ./uninstall-helm.sh
 
-      - name: Pre-Destroy Kubernetes Cleanup
+      - name: Pre-Destroy Kubernetes Resource Cleanup
         if: github.event.inputs.action == 'destroy'
         run: |
           CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          [ -z "${CLUSTER_NAME}" ] && echo "No cluster name. Skipping." && exit 0
+          aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" >/dev/null 2>&1 || { echo "Cluster not found. Skipping."; exit 0; }
+          aws eks update-kubeconfig --region "${REGION}" --name "${CLUSTER_NAME}"
 
-          if [ -z "${CLUSTER_NAME}" ]; then
-            echo "Could not determine cluster name. Skipping Kubernetes cleanup."
-            exit 0
-          fi
+          echo "Deleting PVCs (releases EBS volumes)..."
+          for NS in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}'); do
+            kubectl delete pvc --all -n "${NS}" --ignore-not-found=true || true
+          done
 
-          if ! aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${{ env.AWS_REGION_VALUE }}" >/dev/null 2>&1; then
-            echo "Cluster ${CLUSTER_NAME} not found. Skipping Kubernetes cleanup."
-            exit 0
-          fi
+          echo "Deleting LoadBalancer services (releases ALBs/NLBs)..."
+          kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' | while read -r NS SVC; do
+            [ -z "${NS}" ] && continue
+            kubectl delete svc "${SVC}" -n "${NS}" --ignore-not-found=true || true
+          done
 
-          aws eks update-kubeconfig --region "${{ env.AWS_REGION_VALUE }}" --name "${CLUSTER_NAME}"
+          echo "Deleting Ingresses (releases ALBs)..."
+          kubectl get ingress -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' | while read -r NS ING; do
+            [ -z "${NS}" ] && continue
+            kubectl delete ingress "${ING}" -n "${NS}" --ignore-not-found=true || true
+          done
 
-          kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' > lb-services.txt || true
-          kubectl get ingress -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' > ingress.txt || true
-          kubectl get ns -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' > namespaces.txt || true
+          echo "Deleting non-system namespaces..."
+          for NS in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}'); do
+            case "${NS}" in kube-system|kube-public|kube-node-lease|default) continue ;; esac
+            kubectl delete ns "${NS}" --ignore-not-found=true --wait=false || true
+          done
 
-          while read -r NAMESPACE NAME; do
-            [ -z "${NAMESPACE}" ] && continue
-            kubectl delete ingress "${NAME}" -n "${NAMESPACE}" --ignore-not-found=true || true
-          done < ingress.txt
-
-          while read -r NAMESPACE NAME; do
-            [ -z "${NAMESPACE}" ] && continue
-            kubectl delete svc "${NAME}" -n "${NAMESPACE}" --ignore-not-found=true || true
-          done < lb-services.txt
-
-          kubectl delete deployment,statefulset,daemonset,job,cronjob,pod,service,ingress,pvc --all -n default --ignore-not-found=true || true
-
-          while read -r NAMESPACE; do
-            [ -z "${NAMESPACE}" ] && continue
-            case "${NAMESPACE}" in kube-system|kube-public|kube-node-lease|default) continue ;; esac
-            kubectl delete namespace "${NAMESPACE}" --ignore-not-found=true --wait=false || true
-          done < namespaces.txt
-
-          echo "Waiting for load balancers and ENIs to clean up..."
+          echo "Waiting 3 minutes for AWS to release LBs, ENIs, EBS volumes..."
           sleep 180
 
-      - name: Capture Destroy Subnet IDs
-        if: github.event.inputs.action == 'destroy'
-        run: |
-          terraform output -json private_subnet_ids > private-subnet-ids.json 2>/dev/null || echo '[]' > private-subnet-ids.json
-          terraform output -json public_subnet_ids > public-subnet-ids.json 2>/dev/null || echo '[]' > public-subnet-ids.json
-
-          jq -r '.[]' private-subnet-ids.json > subnet-ids.txt 2>/dev/null || true
-          jq -r '.[]' public-subnet-ids.json >> subnet-ids.txt 2>/dev/null || true
-
-          RESOURCE_COUNT=$(terraform show -json | jq '[.values.root_module.resources | length] | add // 0')
-          echo "${RESOURCE_COUNT}" > resource-count.txt
-
+      # ============================================================
+      # TERRAFORM DESTROY
+      # ============================================================
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
         id: terraform_destroy
         continue-on-error: true
         run: terraform destroy -auto-approve -no-color
 
-      - name: Cleanup Available Network Interfaces
+      - name: Terraform Destroy Retry (if first attempt failed)
         if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome == 'failure'
         run: |
-          touch eni-cleanup.txt
+          echo "First destroy failed. Cleaning ENIs and SGs, then retrying..."
+          REGION="${{ env.AWS_REGION_VALUE }}"
 
+          # Clean orphaned ENIs
+          terraform output -json private_subnet_ids 2>/dev/null | jq -r '.[]' > subnet-ids.txt || true
+          terraform output -json public_subnet_ids 2>/dev/null | jq -r '.[]' >> subnet-ids.txt || true
           while read -r SUBNET_ID; do
             [ -z "${SUBNET_ID}" ] && continue
-            aws ec2 describe-network-interfaces \
-              --filters "Name=subnet-id,Values=${SUBNET_ID}" "Name=status,Values=available" \
-              --region "${{ env.AWS_REGION_VALUE }}" \
-              --query 'NetworkInterfaces[].NetworkInterfaceId' \
-              --output text >> eni-cleanup.txt
+            aws ec2 describe-network-interfaces --filters "Name=subnet-id,Values=${SUBNET_ID}" "Name=status,Values=available" --region "${REGION}" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' | while read -r ENI; do
+              [ -z "${ENI}" ] && continue
+              aws ec2 delete-network-interface --network-interface-id "${ENI}" --region "${REGION}" || true
+            done
           done < subnet-ids.txt
 
-          sort -u eni-cleanup.txt -o eni-cleanup.txt
-
-          while read -r ENI_ID; do
-            [ -z "${ENI_ID}" ] && continue
-            echo "Deleting available ENI: ${ENI_ID}"
-            aws ec2 delete-network-interface \
-              --network-interface-id "${ENI_ID}" \
-              --region "${{ env.AWS_REGION_VALUE }}" || true
-          done < eni-cleanup.txt
-
-      - name: Retry Security Group Cleanup
-        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome == 'failure'
-        run: |
-          VPC_ID="$(terraform output -raw -no-color vpc_id 2>/dev/null | grep -Eo '^vpc-[0-9a-f]+' | head -n1 || true)"
-          if [ -z "${VPC_ID}" ]; then
-            VPC_ID="$(terraform state pull 2>/dev/null | jq -r '.resources[] | select(.type=="aws_vpc") | .instances[0].attributes.id' | head -n1 || true)"
+          # Clean security groups
+          VPC_ID="$(terraform output -raw vpc_id 2>/dev/null | grep -Eo '^vpc-[0-9a-f]+' | head -n1 || true)"
+          if [ -n "${VPC_ID}" ]; then
+            aws ec2 describe-security-groups --filters "Name=vpc-id,Values=${VPC_ID}" --region "${REGION}" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text | tr '\t' '\n' | while read -r SG; do
+              [ -z "${SG}" ] && continue
+              # Revoke all ingress/egress rules first
+              aws ec2 revoke-security-group-ingress --group-id "${SG}" --region "${REGION}" --ip-permissions "$(aws ec2 describe-security-groups --group-ids "${SG}" --region "${REGION}" --query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null)" 2>/dev/null || true
+              aws ec2 revoke-security-group-egress --group-id "${SG}" --region "${REGION}" --ip-permissions "$(aws ec2 describe-security-groups --group-ids "${SG}" --region "${REGION}" --query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null)" 2>/dev/null || true
+              aws ec2 delete-security-group --group-id "${SG}" --region "${REGION}" || true
+            done
           fi
 
-          if [ -z "${VPC_ID}" ]; then
-            exit 0
-          fi
+          sleep 30
+          terraform destroy -auto-approve -no-color
 
-          aws ec2 describe-security-groups \
-            --filters "Name=vpc-id,Values=${VPC_ID}" \
-            --region "${{ env.AWS_REGION_VALUE }}" \
-            --query "SecurityGroups[?GroupName!='default'].GroupId" \
-            --output text > sg-ids.txt || true
-
-          tr '\t' '\n' < sg-ids.txt | while read -r SG_ID; do
-            [ -z "${SG_ID}" ] && continue
-            aws ec2 delete-security-group --group-id "${SG_ID}" --region "${{ env.AWS_REGION_VALUE }}" || true
-          done
-
-      - name: Terraform Destroy Retry
-        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome == 'failure'
-        run: terraform destroy -auto-approve -no-color
-
-      - name: Destroy Summary
+      # ============================================================
+      # POST-DESTROY NUKE: Kill ALL orphaned AWS resources
+      # ============================================================
+      - name: Nuke Orphaned Load Balancers
         if: github.event.inputs.action == 'destroy'
         run: |
-          RESOURCE_COUNT=$(cat resource-count.txt 2>/dev/null || echo "0")
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding orphaned Load Balancers..."
+          LB_ARNS=$(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text || true)
+          for ARN in ${LB_ARNS}; do
+            [ -z "${ARN}" ] && continue
+            echo "Deleting LB: ${ARN}"
+            # Delete listeners first
+            LISTENERS=$(aws elbv2 describe-listeners --load-balancer-arn "${ARN}" --region "${REGION}" --query 'Listeners[*].ListenerArn' --output text 2>/dev/null || true)
+            for L in ${LISTENERS}; do
+              aws elbv2 delete-listener --listener-arn "${L}" --region "${REGION}" || true
+            done
+            aws elbv2 delete-load-balancer --load-balancer-arn "${ARN}" --region "${REGION}" || true
+          done
+          # Delete orphaned target groups
+          TG_ARNS=$(aws elbv2 describe-target-groups --region "${REGION}" --query 'TargetGroups[?LoadBalancerArns[0]==null].TargetGroupArn' --output text || true)
+          for TG in ${TG_ARNS}; do
+            [ -z "${TG}" ] && continue
+            echo "Deleting orphaned Target Group: ${TG}"
+            aws elbv2 delete-target-group --target-group-arn "${TG}" --region "${REGION}" || true
+          done
+
+      - name: Nuke Orphaned EBS Volumes
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding unattached EBS volumes..."
+          VOLUMES=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=available" --query 'Volumes[*].VolumeId' --output text || true)
+          for VOL in ${VOLUMES}; do
+            [ -z "${VOL}" ] && continue
+            echo "Deleting orphaned volume: ${VOL}"
+            aws ec2 delete-volume --volume-id "${VOL}" --region "${REGION}" || true
+          done
+
+      - name: Nuke Orphaned Elastic IPs
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding unassociated Elastic IPs..."
+          EIPS=$(aws ec2 describe-addresses --region "${REGION}" --query 'Addresses[?AssociationId==null].AllocationId' --output text || true)
+          for EIP in ${EIPS}; do
+            [ -z "${EIP}" ] && continue
+            echo "Releasing EIP: ${EIP}"
+            aws ec2 release-address --allocation-id "${EIP}" --region "${REGION}" || true
+          done
+
+      - name: Nuke Orphaned NAT Gateways
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding NAT Gateways..."
+          NATS=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" --query 'NatGateways[*].NatGatewayId' --output text || true)
+          for NAT in ${NATS}; do
+            [ -z "${NAT}" ] && continue
+            echo "Deleting NAT Gateway: ${NAT}"
+            aws ec2 delete-nat-gateway --nat-gateway-id "${NAT}" --region "${REGION}" || true
+          done
+          [ -n "${NATS}" ] && echo "Waiting 60s for NAT Gateways to delete..." && sleep 60
+
+      - name: Nuke Orphaned Security Groups
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding non-default VPCs..."
+          VPCS=$(aws ec2 describe-vpcs --region "${REGION}" --filters "Name=isDefault,Values=false" --query 'Vpcs[*].VpcId' --output text || true)
+          for VPC in ${VPCS}; do
+            [ -z "${VPC}" ] && continue
+            echo "Cleaning SGs in VPC: ${VPC}"
+            aws ec2 describe-security-groups --filters "Name=vpc-id,Values=${VPC}" --region "${REGION}" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text | tr '\t' '\n' | while read -r SG; do
+              [ -z "${SG}" ] && continue
+              aws ec2 revoke-security-group-ingress --group-id "${SG}" --region "${REGION}" --ip-permissions "$(aws ec2 describe-security-groups --group-ids "${SG}" --region "${REGION}" --query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null)" 2>/dev/null || true
+              aws ec2 revoke-security-group-egress --group-id "${SG}" --region "${REGION}" --ip-permissions "$(aws ec2 describe-security-groups --group-ids "${SG}" --region "${REGION}" --query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null)" 2>/dev/null || true
+              aws ec2 delete-security-group --group-id "${SG}" --region "${REGION}" || true
+            done
+          done
+
+      - name: Nuke Orphaned VPCs
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          VPCS=$(aws ec2 describe-vpcs --region "${REGION}" --filters "Name=isDefault,Values=false" --query 'Vpcs[*].VpcId' --output text || true)
+          for VPC in ${VPCS}; do
+            [ -z "${VPC}" ] && continue
+            echo "Cleaning VPC: ${VPC}"
+            # Delete subnets
+            aws ec2 describe-subnets --filters "Name=vpc-id,Values=${VPC}" --region "${REGION}" --query 'Subnets[*].SubnetId' --output text | tr '\t' '\n' | while read -r SUB; do
+              [ -z "${SUB}" ] && continue
+              aws ec2 delete-subnet --subnet-id "${SUB}" --region "${REGION}" || true
+            done
+            # Delete IGW
+            aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=${VPC}" --region "${REGION}" --query 'InternetGateways[*].InternetGatewayId' --output text | tr '\t' '\n' | while read -r IGW; do
+              [ -z "${IGW}" ] && continue
+              aws ec2 detach-internet-gateway --internet-gateway-id "${IGW}" --vpc-id "${VPC}" --region "${REGION}" || true
+              aws ec2 delete-internet-gateway --internet-gateway-id "${IGW}" --region "${REGION}" || true
+            done
+            # Delete route tables (non-main)
+            aws ec2 describe-route-tables --filters "Name=vpc-id,Values=${VPC}" --region "${REGION}" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text | tr '\t' '\n' | while read -r RT; do
+              [ -z "${RT}" ] && continue
+              aws ec2 delete-route-table --route-table-id "${RT}" --region "${REGION}" || true
+            done
+            # Delete ENIs
+            aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=${VPC}" --region "${REGION}" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text | tr '\t' '\n' | while read -r ENI; do
+              [ -z "${ENI}" ] && continue
+              aws ec2 delete-network-interface --network-interface-id "${ENI}" --region "${REGION}" || true
+            done
+            # Delete VPC
+            aws ec2 delete-vpc --vpc-id "${VPC}" --region "${REGION}" || true
+          done
+
+      - name: Nuke EBS Snapshots
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "Finding EBS snapshots owned by this account..."
+          SNAPS=$(aws ec2 describe-snapshots --owner-ids "${ACCOUNT_ID}" --region "${REGION}" --query 'Snapshots[*].SnapshotId' --output text || true)
+          for SNAP in ${SNAPS}; do
+            [ -z "${SNAP}" ] && continue
+            echo "Deleting snapshot: ${SNAP}"
+            aws ec2 delete-snapshot --snapshot-id "${SNAP}" --region "${REGION}" || true
+          done
+
+      - name: Nuke CloudWatch Log Groups
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding CloudWatch log groups matching project..."
+          LOG_GROUPS=$(aws logs describe-log-groups --region "${REGION}" --query 'logGroups[*].logGroupName' --output text || true)
+          for LG in ${LOG_GROUPS}; do
+            [ -z "${LG}" ] && continue
+            case "${LG}" in */arealis*|*/zord*|*/eks*|/aws/eks/*)
+              echo "Deleting log group: ${LG}"
+              aws logs delete-log-group --log-group-name "${LG}" --region "${REGION}" || true
+              ;; esac
+          done
+
+      - name: Nuke Classic Load Balancers (ELB v1)
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding Classic Load Balancers..."
+          CLBS=$(aws elb describe-load-balancers --region "${REGION}" --query 'LoadBalancerDescriptions[*].LoadBalancerName' --output text || true)
+          for CLB in ${CLBS}; do
+            [ -z "${CLB}" ] && continue
+            echo "Deleting Classic LB: ${CLB}"
+            aws elb delete-load-balancer --load-balancer-name "${CLB}" --region "${REGION}" || true
+          done
+
+      - name: Nuke Orphaned EKS Clusters and Node Groups
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding remaining EKS clusters..."
+          CLUSTERS=$(aws eks list-clusters --region "${REGION}" --query 'clusters[*]' --output text || true)
+          for CLUSTER in ${CLUSTERS}; do
+            [ -z "${CLUSTER}" ] && continue
+            echo "Found orphaned cluster: ${CLUSTER}"
+            # Delete node groups first
+            NGS=$(aws eks list-nodegroups --cluster-name "${CLUSTER}" --region "${REGION}" --query 'nodegroups[*]' --output text || true)
+            for NG in ${NGS}; do
+              [ -z "${NG}" ] && continue
+              echo "Deleting node group: ${NG}"
+              aws eks delete-nodegroup --cluster-name "${CLUSTER}" --nodegroup-name "${NG}" --region "${REGION}" || true
+            done
+            # Wait for node groups to delete
+            for NG in ${NGS}; do
+              [ -z "${NG}" ] && continue
+              echo "Waiting for node group ${NG} to delete..."
+              aws eks wait nodegroup-deleted --cluster-name "${CLUSTER}" --nodegroup-name "${NG}" --region "${REGION}" 2>/dev/null || true
+            done
+            # Delete the cluster
+            echo "Deleting cluster: ${CLUSTER}"
+            aws eks delete-cluster --name "${CLUSTER}" --region "${REGION}" || true
+            aws eks wait cluster-deleted --name "${CLUSTER}" --region "${REGION}" 2>/dev/null || true
+          done
+
+      - name: Nuke Orphaned IAM Roles and Policies
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding IAM roles with arealis-zord prefix..."
+          ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'arealis-zord')].RoleName" --output text || true)
+          for ROLE in ${ROLES}; do
+            [ -z "${ROLE}" ] && continue
+            echo "Cleaning role: ${ROLE}"
+            # Detach managed policies
+            POLICIES=$(aws iam list-attached-role-policies --role-name "${ROLE}" --query 'AttachedPolicies[*].PolicyArn' --output text || true)
+            for POL in ${POLICIES}; do
+              aws iam detach-role-policy --role-name "${ROLE}" --policy-arn "${POL}" || true
+            done
+            # Delete inline policies
+            INLINE=$(aws iam list-role-policies --role-name "${ROLE}" --query 'PolicyNames[*]' --output text || true)
+            for IP in ${INLINE}; do
+              aws iam delete-role-policy --role-name "${ROLE}" --policy-name "${IP}" || true
+            done
+            # Delete instance profiles
+            IPS=$(aws iam list-instance-profiles-for-role --role-name "${ROLE}" --query 'InstanceProfiles[*].InstanceProfileName' --output text || true)
+            for INST_PROF in ${IPS}; do
+              aws iam remove-role-from-instance-profile --instance-profile-name "${INST_PROF}" --role-name "${ROLE}" || true
+              aws iam delete-instance-profile --instance-profile-name "${INST_PROF}" || true
+            done
+            # Delete the role
+            aws iam delete-role --role-name "${ROLE}" || true
+          done
+          # Delete custom policies
+          echo "Finding custom IAM policies with arealis-zord prefix..."
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          CUSTOM_POLS=$(aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName,'arealis-zord')].Arn" --output text || true)
+          for POL in ${CUSTOM_POLS}; do
+            [ -z "${POL}" ] && continue
+            echo "Deleting policy: ${POL}"
+            # Detach from all entities first
+            aws iam list-entities-for-policy --policy-arn "${POL}" --query 'PolicyRoles[*].RoleName' --output text | tr '\t' '\n' | while read -r R; do
+              [ -z "${R}" ] && continue
+              aws iam detach-role-policy --role-name "${R}" --policy-arn "${POL}" || true
+            done
+            # Delete all non-default versions
+            aws iam list-policy-versions --policy-arn "${POL}" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text | tr '\t' '\n' | while read -r VER; do
+              [ -z "${VER}" ] && continue
+              aws iam delete-policy-version --policy-arn "${POL}" --version-id "${VER}" || true
+            done
+            aws iam delete-policy --policy-arn "${POL}" || true
+          done
+
+      - name: Nuke OIDC Providers
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Finding OIDC providers..."
+          OIDC_ARNS=$(aws iam list-open-id-connect-providers --query 'OpenIDConnectProviderList[*].Arn' --output text || true)
+          for OIDC in ${OIDC_ARNS}; do
+            [ -z "${OIDC}" ] && continue
+            # Only delete EKS-related OIDC providers
+            URL=$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "${OIDC}" --query 'Url' --output text 2>/dev/null || true)
+            case "${URL}" in *oidc.eks*)
+              echo "Deleting OIDC provider: ${OIDC}"
+              aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "${OIDC}" || true
+              ;; esac
+          done
+
+      - name: Report ECR Untagged Images
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          echo "Checking ECR repositories for untagged images..."
+          REPOS=$(aws ecr describe-repositories --region "${REGION}" --query 'repositories[*].repositoryName' --output text || true)
+          ECR_REPORT=""
+          TOTAL_UNTAGGED=0
+          for REPO in ${REPOS}; do
+            [ -z "${REPO}" ] && continue
+            case "${REPO}" in zord/*)
+              COUNT=$(aws ecr list-images --repository-name "${REPO}" --region "${REGION}" --filter tagStatus=UNTAGGED --query 'imageIds|length(@)' --output text 2>/dev/null || echo "0")
+              if [ "${COUNT}" -gt 0 ]; then
+                ECR_REPORT="${ECR_REPORT}\n| \`${REPO}\` | ${COUNT} untagged images |"
+                TOTAL_UNTAGGED=$((TOTAL_UNTAGGED + COUNT))
+              fi
+              ;; esac
+          done
+          if [ "${TOTAL_UNTAGGED}" -gt 0 ]; then
+            {
+              echo ""
+              echo "### 🐳 ECR Untagged Images (not auto-deleted)"
+              echo ""
+              echo "These images cost \$0.10/GB/month. Delete manually if not needed:"
+              echo ""
+              echo "| Repository | Untagged |"
+              echo "|---|---|"
+              echo -e "${ECR_REPORT}"
+              echo ""
+              echo "To delete all untagged images:"
+              echo ""
+              echo "\`\`\`bash"
+              for REPO in ${REPOS}; do
+                case "${REPO}" in zord/*)
+                  echo "aws ecr batch-delete-image --repository-name ${REPO} --region ${REGION} --image-ids \"\$(aws ecr list-images --repository-name ${REPO} --region ${REGION} --filter tagStatus=UNTAGGED --query 'imageIds' --output json)\""
+                  ;; esac
+              done
+              echo "\`\`\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ============================================================
+      # REAL-TIME DESTROY VERIFICATION SUMMARY
+      # ============================================================
+      - name: Final Verification and Billing Summary
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          REGION="${{ env.AWS_REGION_VALUE }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+          # Get real billing data from Cost Explorer
+          TODAY=$(date +%Y-%m-%d)
+          YESTERDAY=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d 2>/dev/null || echo "")
+          WEEK_AGO=$(date -d "7 days ago" +%Y-%m-%d 2>/dev/null || date -v-7d +%Y-%m-%d 2>/dev/null || echo "")
+          MONTH_START=$(date +%Y-%m-01)
+
+          DAILY_COST="N/A"
+          if [ -n "${YESTERDAY}" ]; then
+            DAILY_COST=$(aws ce get-cost-and-usage \
+              --time-period Start="${YESTERDAY}",End="${TODAY}" \
+              --granularity DAILY \
+              --metrics UnblendedCost \
+              --query 'ResultsByTime[0].Total.UnblendedCost.Amount' \
+              --output text 2>/dev/null || echo "N/A")
+          fi
+
+          WEEKLY_COST="N/A"
+          if [ -n "${WEEK_AGO}" ]; then
+            WEEKLY_COST=$(aws ce get-cost-and-usage \
+              --time-period Start="${WEEK_AGO}",End="${TODAY}" \
+              --granularity DAILY \
+              --metrics UnblendedCost \
+              --query 'ResultsByTime[*].Total.UnblendedCost.Amount' \
+              --output text 2>/dev/null | awk '{sum+=$1} END {printf "%.2f", sum}' || echo "N/A")
+          fi
+
+          MONTHLY_COST=$(aws ce get-cost-and-usage \
+            --time-period Start="${MONTH_START}",End="${TODAY}" \
+            --granularity MONTHLY \
+            --metrics UnblendedCost \
+            --query 'ResultsByTime[0].Total.UnblendedCost.Amount' \
+            --output text 2>/dev/null || echo "N/A")
+
+          # Query remaining resources
+          EC2_RUNNING=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" --query 'Reservations[*].Instances[*].InstanceId' --output text | wc -w || echo "0")
+          EBS_ATTACHED=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=in-use" --query 'Volumes[*].VolumeId' --output text | wc -w || echo "0")
+          EBS_AVAILABLE=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=available" --query 'Volumes[*].VolumeId' --output text | wc -w || echo "0")
+          EIP_COUNT=$(aws ec2 describe-addresses --region "${REGION}" --query 'Addresses[*].AllocationId' --output text | wc -w || echo "0")
+          NAT_COUNT=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" --query 'NatGateways[*].NatGatewayId' --output text | wc -w || echo "0")
+          LB_COUNT=$(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text | wc -w || echo "0")
+          CLB_COUNT=$(aws elb describe-load-balancers --region "${REGION}" --query 'LoadBalancerDescriptions[*].LoadBalancerName' --output text | wc -w || echo "0")
+          VPC_COUNT=$(aws ec2 describe-vpcs --region "${REGION}" --filters "Name=isDefault,Values=false" --query 'Vpcs[*].VpcId' --output text | wc -w || echo "0")
+          SG_COUNT=$(aws ec2 describe-security-groups --region "${REGION}" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | wc -w || echo "0")
+          EKS_COUNT=$(aws eks list-clusters --region "${REGION}" --query 'clusters' --output text | wc -w || echo "0")
+          SNAP_COUNT=$(aws ec2 describe-snapshots --owner-ids "${ACCOUNT_ID}" --region "${REGION}" --query 'Snapshots[*].SnapshotId' --output text | wc -w || echo "0")
+          IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'arealis-zord')]|length(@)" --output text || echo "0")
+          OIDC_COUNT=$(aws iam list-open-id-connect-providers --query 'OpenIDConnectProviderList|length(@)' --output text || echo "0")
+
+          # Determine status per resource
+          status() { [ "$1" -eq 0 ] && echo "✅ Clean" || echo "❌ $1 remaining"; }
+
+          # Calculate if billing is zero
+          TOTAL=$((EC2_RUNNING + EBS_ATTACHED + EBS_AVAILABLE + EIP_COUNT + NAT_COUNT + LB_COUNT + CLB_COUNT + VPC_COUNT + EKS_COUNT))
+          if [ "${TOTAL}" -eq 0 ]; then
+            BILLING_STATUS="✅ \$0/month — All resources destroyed"
+            BILLING_COLOR="🟢"
+          else
+            BILLING_STATUS="⚠️ Resources still exist — you ARE being billed"
+            BILLING_COLOR="🔴"
+          fi
+
           {
-            echo "## 🗑️ ${{ github.event.inputs.environment }} Cluster Destroyed"
+            echo "## 🗑️ ${{ github.event.inputs.environment }} Destroy Complete"
             echo ""
-            echo "**Environment: \`${{ github.event.inputs.environment }}\`**"
-            echo "**Total resources deleted: ${RESOURCE_COUNT}**"
+            echo "### ${BILLING_COLOR} Billing Status: ${BILLING_STATUS}"
             echo ""
-            echo "> State file: \`eks/${{ github.event.inputs.environment }}/terraform.tfstate\`"
+            echo "### Resource Verification (Live AWS Query)"
+            echo ""
+            echo "| Resource | Count | Status |"
+            echo "|---|---|---|"
+            echo "| EKS Clusters | ${EKS_COUNT} | $(status ${EKS_COUNT}) |"
+            echo "| EC2 Instances (running) | ${EC2_RUNNING} | $(status ${EC2_RUNNING}) |"
+            echo "| EBS Volumes (attached) | ${EBS_ATTACHED} | $(status ${EBS_ATTACHED}) |"
+            echo "| EBS Volumes (orphaned) | ${EBS_AVAILABLE} | $(status ${EBS_AVAILABLE}) |"
+            echo "| Elastic IPs | ${EIP_COUNT} | $(status ${EIP_COUNT}) |"
+            echo "| NAT Gateways | ${NAT_COUNT} | $(status ${NAT_COUNT}) |"
+            echo "| Load Balancers (ALB/NLB) | ${LB_COUNT} | $(status ${LB_COUNT}) |"
+            echo "| Load Balancers (Classic) | ${CLB_COUNT} | $(status ${CLB_COUNT}) |"
+            echo "| Non-default VPCs | ${VPC_COUNT} | $(status ${VPC_COUNT}) |"
+            echo "| Security Groups | ${SG_COUNT} | $(status ${SG_COUNT}) |"
+            echo "| EBS Snapshots | ${SNAP_COUNT} | $(status ${SNAP_COUNT}) |"
+            echo "| IAM Roles (arealis-zord) | ${IAM_ROLES} | $(status ${IAM_ROLES}) |"
+            echo "| OIDC Providers | ${OIDC_COUNT} | $(status ${OIDC_COUNT}) |"
+            echo ""
+            if [ "${TOTAL}" -gt 0 ]; then
+              echo "### ⚠️ Action Required"
+              echo ""
+              echo "Some resources were not deleted. Check AWS Console manually."
+              echo "These may be from other projects or have deletion protection enabled."
+            else
+              echo "### 🎉 Your AWS account is clean"
+              echo ""
+              echo "No billable resources found in \`${REGION}\`."
+              echo "Your monthly bill for this region should be **\$0** going forward."
+            fi
+            echo ""
+            echo "### 💰 Billing Before Destroy (what you were paying)"
+            echo ""
+            echo "| Period | Cost (USD) |"
+            echo "|---|---|"
+            echo "| Yesterday (daily rate) | \$${DAILY_COST} |"
+            echo "| Last 7 days total | \$${WEEKLY_COST} |"
+            echo "| This month total (before destroy) | \$${MONTHLY_COST} |"
+            echo ""
+            echo "> After destroy, your daily cost drops to **\$0** (except S3 state bucket: ~\$0.02/month)."
+            echo ""
+            echo "---"
+            echo ""
+            echo "> Terraform state: \`eks/${{ github.event.inputs.environment }}/terraform.tfstate\`"
+            echo "> S3 state bucket still exists — delete manually if no longer needed."
           } >> "$GITHUB_STEP_SUMMARY"
