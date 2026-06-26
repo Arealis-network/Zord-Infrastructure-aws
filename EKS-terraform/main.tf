@@ -575,7 +575,7 @@ resource "aws_eks_node_group" "stateless" {
   capacity_type  = "SPOT"
 
   scaling_config {
-    desired_size = 1
+    desired_size = 4
     max_size     = 20
     min_size     = 1
   }
