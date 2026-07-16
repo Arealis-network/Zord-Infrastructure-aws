@@ -162,7 +162,7 @@ Example with real values:
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:YourOrg/Zord-Infrastructure-aws:*"
+          "token.actions.githubusercontent.com:sub": "repo:Arealis-network/Zord-Infrastructure-aws:*"
         }
       }
     }
