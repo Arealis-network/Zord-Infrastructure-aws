@@ -66,45 +66,30 @@ Add these repository secrets:
 
 | Secret | Description |
 |---|---|
-| `AWS_ACCESS_KEY_ID` | Your AWS access key ID |
-| `AWS_SECRET_ACCESS_KEY` | Your AWS secret access key |
+| `AWS_ROLE_ARN` | IAM role ARN for GitHub OIDC (see root README for setup) |
 | `TF_STATE_BUCKET` | S3 bucket name for Terraform state |
 
-These are shared across both environments.
+Authentication uses GitHub OIDC — no static AWS keys needed. See the root `README.md` for full OIDC setup instructions.
 
 ## How To Create The S3 Bucket For Terraform State
 
-Use a globally unique bucket name.
+Open AWS Console:
 
-Example:
-
-```bash
-aws s3api create-bucket --bucket my-eks-terraform-state-bucket --region ap-south-1
+```
+S3 → Create bucket
 ```
 
-Enable versioning:
+Set:
 
-```bash
-aws s3api put-bucket-versioning \
-  --bucket my-eks-terraform-state-bucket \
-  --versioning-configuration Status=Enabled
-```
+| Field | Value |
+|---|---|
+| Bucket name | `zord-infrastructure-aws-tf-state` |
+| AWS Region | `ap-south-1` |
+| Bucket Versioning | Enable |
+| Default encryption | SSE-S3 (AES-256) |
+| Block all public access | ✅ Enabled (all 4 checkboxes) |
 
-Enable default encryption:
-
-```bash
-aws s3api put-bucket-encryption \
-  --bucket my-eks-terraform-state-bucket \
-  --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-```
-
-Block public access:
-
-```bash
-aws s3api put-public-access-block \
-  --bucket my-eks-terraform-state-bucket \
-  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-```
+Click `Create bucket`.
 
 Then store the bucket name in GitHub as `TF_STATE_BUCKET`.
 
@@ -184,7 +169,7 @@ Init:
 
 ```bash
 terraform init \
-  -backend-config="bucket=my-eks-terraform-state-bucket" \
+  -backend-config="bucket=zord-infrastructure-aws-tf-state" \
   -backend-config="key=eks/staging/terraform.tfstate" \
   -backend-config="region=ap-south-1" \
   -backend-config="encrypt=true"
@@ -214,7 +199,7 @@ Init (use `-reconfigure` if switching from staging):
 
 ```bash
 terraform init -reconfigure \
-  -backend-config="bucket=my-eks-terraform-state-bucket" \
+  -backend-config="bucket=zord-infrastructure-aws-tf-state" \
   -backend-config="key=eks/production/terraform.tfstate" \
   -backend-config="region=ap-south-1" \
   -backend-config="encrypt=true"

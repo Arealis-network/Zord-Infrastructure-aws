@@ -78,7 +78,127 @@ If you select `destroy`, you must also set:
 confirm_destroy = yes
 ```
 
-## GitHub Repository Secrets
+## AWS Authentication (GitHub OIDC)
+
+This project uses **OpenID Connect (OIDC)** to authenticate GitHub Actions with AWS. No static access keys are stored — GitHub gets temporary credentials by assuming an IAM role.
+
+### How It Works
+
+```
+GitHub Actions → requests OIDC token → AWS STS validates token → returns temporary credentials
+```
+
+Benefits:
+- No long-lived AWS credentials stored in GitHub
+- Credentials are short-lived (15 min by default)
+- No key rotation needed
+- Follows AWS security best practices
+
+### Step 1: Create the OIDC Identity Provider in AWS
+
+Open AWS Console:
+
+```
+IAM → Identity providers → Add provider
+```
+
+Set:
+
+| Field | Value |
+|---|---|
+| Provider type | OpenID Connect |
+| Provider URL | `https://token.actions.githubusercontent.com` |
+| Audience | `sts.amazonaws.com` |
+
+Click `Get thumbprint`, then click `Add provider`.
+
+### Step 2: Create the IAM Role for GitHub Actions
+
+Go to:
+
+```
+IAM → Roles → Create role
+```
+
+Choose `Custom trust policy` and paste this (replace `<YOUR_GITHUB_ORG/REPO>` with your actual GitHub repo path):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::673698305621:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:<YOUR_GITHUB_ORG/REPO>:*"
+        }
+      }
+    }
+  ]
+}
+```
+
+Example with real values:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::673698305621:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:YourOrg/Zord-Infrastructure-aws:*"
+        }
+      }
+    }
+  ]
+}
+```
+
+Click `Next`.
+
+### Step 3: Attach Permissions to the Role
+
+Attach the `AdministratorAccess` policy (or create a custom policy with only the permissions needed for EKS, VPC, IAM, EC2, Secrets Manager, S3, SES, EventBridge, Auto Scaling, ELB, CloudWatch, Cost Explorer).
+
+Use this role name:
+
+```
+zord-infrastructure-aws-role
+```
+
+Click `Create role`.
+
+### Step 4: Copy the Role ARN
+
+Open:
+
+```
+IAM → Roles → zord-infrastructure-aws-role
+```
+
+Copy the ARN. It looks like:
+
+```
+arn:aws:iam::673698305621:role/zord-infrastructure-aws-role
+```
+
+### Step 5: Add GitHub Repository Secrets
 
 Open:
 
@@ -92,8 +212,7 @@ Add these repository secrets:
 
 | Secret | Description |
 |---|---|
-| `AWS_ACCESS_KEY_ID` | Your AWS access key ID |
-| `AWS_SECRET_ACCESS_KEY` | Your AWS secret access key |
+| `AWS_ROLE_ARN` | The IAM role ARN from Step 4 (e.g., `arn:aws:iam::673698305621:role/zord-infrastructure-aws-role`) |
 | `TF_STATE_BUCKET` | S3 bucket name for Terraform state |
 
 ### Staging secrets
@@ -102,6 +221,7 @@ Add these repository secrets:
 |---|---|
 | `ZORD_APP_SECRETS_JSON_STAGING` | JSON string for `staging/zord/app-secrets` |
 | `ZORD_EDGE_SIGNING_KEY_JSON_STAGING` | JSON string for `staging/zord/edge-signing-key` |
+| `ZORD_EVIDENCE_SIGNING_KEY_JSON_STAGING` | JSON string for `staging/zord/evidence-signing-key` |
 
 ### Production secrets
 
@@ -109,38 +229,46 @@ Add these repository secrets:
 |---|---|
 | `ZORD_APP_SECRETS_JSON_PRODUCTION` | JSON string for `production/zord/app-secrets` |
 | `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION` | JSON string for `production/zord/edge-signing-key` |
+| `ZORD_EVIDENCE_SIGNING_KEY_JSON_PRODUCTION` | JSON string for `production/zord/evidence-signing-key` |
+
+### What Changed From Before
+
+| Before (static keys) | After (OIDC) |
+|---|---|
+| `AWS_ACCESS_KEY_ID` secret | ❌ Removed |
+| `AWS_SECRET_ACCESS_KEY` secret | ❌ Removed |
+| — | ✅ `AWS_ROLE_ARN` added |
+| Keys never expire, must rotate manually | Credentials expire in 15 minutes automatically |
+| Risk of key leak | No keys to leak |
+
+### Troubleshooting OIDC
+
+If the workflow fails with `Not authorized to perform sts:AssumeRoleWithWebIdentity`:
+
+1. Check that the OIDC provider exists in IAM → Identity providers
+2. Check the trust policy `sub` condition matches your repo name exactly (case-sensitive)
+3. Check that `id-token: write` permission is in the workflow
+4. Check that the role has the required permissions attached
 
 ## Create S3 Bucket For Terraform State
 
-Use a globally unique bucket name:
+Open AWS Console:
 
-```bash
-aws s3api create-bucket --bucket my-eks-terraform-state-bucket --region ap-south-1
+```
+S3 → Create bucket
 ```
 
-Enable versioning:
+Set:
 
-```bash
-aws s3api put-bucket-versioning \
-  --bucket my-eks-terraform-state-bucket \
-  --versioning-configuration Status=Enabled
-```
+| Field | Value |
+|---|---|
+| Bucket name | `zord-infrastructure-aws-tf-state` |
+| AWS Region | `ap-south-1` |
+| Bucket Versioning | Enable |
+| Default encryption | SSE-S3 (AES-256) |
+| Block all public access | ✅ Enabled (all 4 checkboxes) |
 
-Enable default encryption:
-
-```bash
-aws s3api put-bucket-encryption \
-  --bucket my-eks-terraform-state-bucket \
-  --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-```
-
-Block public access:
-
-```bash
-aws s3api put-public-access-block \
-  --bucket my-eks-terraform-state-bucket \
-  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-```
+Click `Create bucket`.
 
 Then store the bucket name in GitHub as `TF_STATE_BUCKET`.
 
@@ -195,7 +323,7 @@ If needed, you can run Terraform locally. Example for staging:
 cd EKS-terraform
 
 terraform init \
-  -backend-config="bucket=<your-tf-state-bucket>" \
+  -backend-config="bucket=zord-infrastructure-aws-tf-state" \
   -backend-config="key=eks/staging/terraform.tfstate" \
   -backend-config="region=ap-south-1" \
   -backend-config="encrypt=true"
@@ -208,7 +336,7 @@ For production:
 
 ```bash
 terraform init -reconfigure \
-  -backend-config="bucket=<your-tf-state-bucket>" \
+  -backend-config="bucket=zord-infrastructure-aws-tf-state" \
   -backend-config="key=eks/production/terraform.tfstate" \
   -backend-config="region=ap-south-1" \
   -backend-config="encrypt=true"
