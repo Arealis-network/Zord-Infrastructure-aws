@@ -74,6 +74,7 @@ jobs:
         with:
           aws-region: ${{ env.AWS_REGION_VALUE }}
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-duration-seconds: 3600
       - name: Terraform Format Check
         run: terraform fmt -check
       - name: Terraform Init
@@ -111,6 +112,7 @@ jobs:
         with:
           aws-region: ${{ env.AWS_REGION_VALUE }}
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-duration-seconds: 7200
       - name: Validate destroy confirmation
         if: github.event.inputs.action == 'destroy'
         run: |
