@@ -83,8 +83,7 @@ Open:
 
 You need these GitHub secrets:
 
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
+- `AWS_ROLE_ARN`
 - `TF_STATE_BUCKET`
 - `ZORD_APP_SECRETS_JSON_STAGING`
 - `ZORD_APP_SECRETS_JSON_PRODUCTION`
@@ -95,13 +94,11 @@ You need these GitHub secrets:
 
 ## What Each GitHub Secret Means
 
-### `AWS_ACCESS_KEY_ID`
+### `AWS_ROLE_ARN`
 
-Your AWS access key ID.
+The IAM role ARN that GitHub Actions assumes via OIDC. See the root `README.md` for full setup instructions.
 
-### `AWS_SECRET_ACCESS_KEY`
-
-Your AWS secret access key.
+No static AWS access keys are needed — authentication uses GitHub OpenID Connect.
 
 ### `TF_STATE_BUCKET`
 
@@ -468,7 +465,7 @@ If using real backend locally for staging:
 
 ```powershell
 terraform init `
-  -backend-config="bucket=<your-tf-state-bucket>" `
+  -backend-config="bucket=zord-infrastructure-aws-tf-state" `
   -backend-config="key=secret-manager/staging/terraform.tfstate" `
   -backend-config="region=ap-south-1" `
   -backend-config="encrypt=true"
@@ -485,7 +482,7 @@ For production:
 
 ```powershell
 terraform init -reconfigure `
-  -backend-config="bucket=<your-tf-state-bucket>" `
+  -backend-config="bucket=zord-infrastructure-aws-tf-state" `
   -backend-config="key=secret-manager/production/terraform.tfstate" `
   -backend-config="region=ap-south-1" `
   -backend-config="encrypt=true"
@@ -505,7 +502,7 @@ You need to do only this:
    - `ZORD_EDGE_SIGNING_KEY_JSON_PRODUCTION`
    - `ZORD_EVIDENCE_SIGNING_KEY_JSON_STAGING`
    - `ZORD_EVIDENCE_SIGNING_KEY_JSON_PRODUCTION`
-2. Make sure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `TF_STATE_BUCKET` already exist
+2. Make sure `AWS_ROLE_ARN` and `TF_STATE_BUCKET` already exist
 3. Run GitHub Action with environment + apply
 
 After that, AWS Secrets Manager will contain all secret values for that environment:
