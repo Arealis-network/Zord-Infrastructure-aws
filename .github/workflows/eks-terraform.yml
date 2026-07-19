@@ -446,13 +446,18 @@ jobs:
         run: |
           REGION="${{ env.AWS_REGION_VALUE }}"
           echo "Finding NAT Gateways..."
-          NATS=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" --query 'NatGateways[*].NatGatewayId' --output text || true)
-          for NAT in ${NATS}; do
-            [ -z "${NAT}" ] && continue
-            echo "Deleting NAT Gateway: ${NAT}"
-            aws ec2 delete-nat-gateway --nat-gateway-id "${NAT}" --region "${REGION}" || true
-          done
-          [ -n "${NATS}" ] && echo "Waiting 60s for NAT Gateways to delete..." && sleep 60
+          NATS=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null || echo "")
+          if [ -n "${NATS}" ] && [ "${NATS}" != "None" ]; then
+            for NAT in ${NATS}; do
+              [ -z "${NAT}" ] && continue
+              echo "Deleting NAT Gateway: ${NAT}"
+              aws ec2 delete-nat-gateway --nat-gateway-id "${NAT}" --region "${REGION}" || true
+            done
+            echo "Waiting 60s for NAT Gateways to delete..."
+            sleep 60
+          else
+            echo "No NAT Gateways found."
+          fi
 
       - name: Nuke Orphaned Security Groups
         if: github.event.inputs.action == 'destroy'
