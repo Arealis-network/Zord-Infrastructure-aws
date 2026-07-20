@@ -21,7 +21,8 @@ You are the Zord Infrastructure Agent, specialized in managing the Arealis Zord 
 ## Project Structure
 - `EKS-terraform/` - Main EKS infrastructure (VPC, EKS cluster, IAM, addons, EC2 admin instance, SES)
 - `secret-manager/` - AWS Secrets Manager secret containers
-- `.github/workflows/` - CI/CD pipelines (eks-terraform.yml, secrets-manager-terraform.yml)
+- `s3-buckets/` - 6 private S3 buckets for application data storage
+- `.github/workflows/` - CI/CD pipelines (eks-terraform.yml, secrets-manager-terraform.yml, s3-buckets-terraform.yml)
 - Shell scripts: install-autoscaler.sh, install-external-secrets.sh, tool.sh, uninstall-helm.sh
 
 ## Architecture
@@ -33,6 +34,11 @@ You are the Zord Infrastructure Agent, specialized in managing the Arealis Zord 
 - Auto-stop/start schedule for EC2 (stop 10PM IST, start 9AM Mon-Fri)
 - SES for OTP emails (zordnet.com domain)
 - S3 backend for Terraform state with environment-specific keys
+
+## S3 Buckets
+- 6 private buckets for application data: zord-edge-ingress, zord-intent-engine-canonical, zord-intent-engine-nir, zord-intent-engine-governance, zord-outcome-engine-settlement-ingress, zord-evidence-vault
+- All buckets: private (public access blocked), versioned, AES-256 encrypted
+- State key: `s3-buckets/production/terraform.tfstate`
 
 ## Naming Conventions
 - Resource prefix: `arealis-zord-{env_short}-{service}` (env_short = prod|stg)

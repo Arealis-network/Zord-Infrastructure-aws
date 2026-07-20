@@ -26,6 +26,7 @@ This project is managed through GitHub Actions workflows:
 ```text
 /.github/workflows/eks-terraform.yml
 /.github/workflows/secrets-manager-terraform.yml
+/.github/workflows/s3-buckets-terraform.yml
 ```
 
 ## Recommended Run Order
@@ -478,7 +479,8 @@ sudo cat /var/log/tool-bootstrap.log
 .
 ├── .github/workflows/
 │   ├── eks-terraform.yml              # EKS cluster workflow
-│   └── secrets-manager-terraform.yml  # Secrets Manager workflow
+│   ├── secrets-manager-terraform.yml  # Secrets Manager workflow
+│   └── s3-buckets-terraform.yml       # S3 buckets workflow
 ├── EKS-terraform/
 │   ├── main.tf                        # VPC, EKS, IAM, addons, EC2
 │   ├── variables.tf                   # Environment + cluster variables
@@ -491,8 +493,38 @@ sudo cat /var/log/tool-bootstrap.log
 │   ├── main.tf                        # AWS Secrets Manager resources
 │   ├── variables.tf                   # Environment + secret variables
 │   └── outputs.tf                     # Secret name and ARN outputs
+├── s3-buckets/
+│   ├── main.tf                        # 6 private S3 buckets
+│   ├── variables.tf                   # Bucket name variables
+│   └── outputs.tf                     # Bucket names and ARN outputs
 └── README.md
 ```
+
+## S3 Buckets (Application Storage)
+
+6 private S3 buckets for Zord application data:
+
+| Bucket | Purpose |
+|---|---|
+| `zord-edge-ingress` | Edge service ingress payloads |
+| `zord-intent-engine-canonical` | Intent engine canonical store |
+| `zord-intent-engine-nir` | Intent engine NIR store |
+| `zord-intent-engine-governance` | Intent engine governance store |
+| `zord-outcome-engine-settlement-ingress` | Outcome engine settlement ingress |
+| `zord-evidence-vault` | Evidence vault storage |
+
+All buckets are:
+- Private (all public access blocked)
+- Versioning enabled
+- Server-side encryption (AES-256)
+
+Deploy:
+
+```
+GitHub Actions → S3 Buckets Terraform → Run workflow → apply
+```
+
+State key: `s3-buckets/production/terraform.tfstate`
 
 ## Notes
 
