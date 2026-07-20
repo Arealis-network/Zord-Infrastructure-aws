@@ -171,6 +171,26 @@ systemctl enable --now docker
 
 usermod -aG docker ec2-user || true
 chmod 666 /var/run/docker.sock
+
+#----------------------------- Fix Docker Socket On Reboot -----------------------------
+
+tee /etc/systemd/system/fix-docker-socket.service > /dev/null <<'EOF'
+[Unit]
+Description=Fix Docker socket permissions for Jenkins
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/chmod 666 /var/run/docker.sock
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable fix-docker-socket.service
 docker --version
 
 #----------------------------- Install Jenkins -----------------------------
