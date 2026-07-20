@@ -754,6 +754,23 @@ resource "aws_instance" "eks" {
 }
 
 ############################
+# EC2 ELASTIC IP (static)
+############################
+
+resource "aws_eip" "admin" {
+  domain = "vpc"
+
+  tags = {
+    Name = "${local.eks_name_prefix} admin eip"
+  }
+}
+
+resource "aws_eip_association" "admin" {
+  instance_id   = aws_instance.eks.id
+  allocation_id = aws_eip.admin.id
+}
+
+############################
 # EC2 AUTO-STOP SCHEDULE
 ############################
 

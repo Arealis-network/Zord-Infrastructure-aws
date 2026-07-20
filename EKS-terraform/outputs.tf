@@ -76,8 +76,8 @@ output "node_role_arn" {
 ############################
 
 output "ec2_public_ip" {
-  description = "Public IP of the EC2 instance created in the public subnet."
-  value       = aws_instance.eks.public_ip
+  description = "Static public IP (Elastic IP) of the EC2 admin instance."
+  value       = aws_eip.admin.public_ip
 }
 
 ############################
