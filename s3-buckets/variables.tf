@@ -11,31 +11,37 @@ variable "environment" {
 }
 
 variable "bucket_1_name" {
-  description = "Name for S3 bucket 1."
+  description = "S3 bucket for zord-edge ingress payloads."
   type        = string
+  default     = "zord-edge-ingress"
 }
 
 variable "bucket_2_name" {
-  description = "Name for S3 bucket 2."
+  description = "S3 bucket for zord-intent-engine canonical store."
   type        = string
+  default     = "zord-intent-engine-canonical"
 }
 
 variable "bucket_3_name" {
-  description = "Name for S3 bucket 3."
+  description = "S3 bucket for zord-intent-engine NIR store."
   type        = string
+  default     = "zord-intent-engine-nir"
 }
 
 variable "bucket_4_name" {
-  description = "Name for S3 bucket 4."
+  description = "S3 bucket for zord-intent-engine governance store."
   type        = string
+  default     = "zord-intent-engine-governance"
 }
 
 variable "bucket_5_name" {
-  description = "Name for S3 bucket 5."
+  description = "S3 bucket for zord-outcome-engine settlement ingress."
   type        = string
+  default     = "zord-outcome-engine-settlement-ingress"
 }
 
 variable "bucket_6_name" {
-  description = "Name for S3 bucket 6."
+  description = "S3 bucket for zord-evidence vault."
   type        = string
+  default     = "zord-evidence-vault"
 }
