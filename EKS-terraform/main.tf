@@ -866,6 +866,10 @@ resource "aws_eks_addon" "vpc_cni" {
 
   resolve_conflicts_on_update = "OVERWRITE"
 
+  configuration_values = jsonencode({
+    enableNetworkPolicy = "true"
+  })
+
   depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
 }
 
