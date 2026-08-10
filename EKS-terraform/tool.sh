@@ -216,6 +216,9 @@ RUN apt-get update \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
+    && curl -fsSL https://go.dev/dl/go1.22.5.linux-amd64.tar.gz | tar -C /usr/local -xzf - \
+    && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
+    && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -229,6 +232,7 @@ RUN apt-get update \
     && node --version \
     && npm --version \
     && python3 --version \
+    && go version \
     && rm -rf /var/lib/apt/lists/*
 
 USER jenkins
