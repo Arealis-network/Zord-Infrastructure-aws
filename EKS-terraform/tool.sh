@@ -211,6 +211,11 @@ RUN apt-get update \
         curl \
         git \
         unzip \
+        python3 \
+        python3-pip \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -221,6 +226,9 @@ RUN apt-get update \
     && docker --version \
     && aws --version \
     && git --version \
+    && node --version \
+    && npm --version \
+    && python3 --version \
     && rm -rf /var/lib/apt/lists/*
 
 USER jenkins
