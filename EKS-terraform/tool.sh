@@ -213,6 +213,7 @@ RUN apt-get update \
         unzip \
         python3 \
         python3-pip \
+    && pip3 install --break-system-packages pytest \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
