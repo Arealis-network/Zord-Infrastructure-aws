@@ -631,3 +631,16 @@ No traffic   → Pod CPU ↓ → HPA removes pods ↓ → Autoscaler removes nod
 | Monthly | ~$540 | ~$750-1000 |
 
 The system auto-adjusts. You pay for what you use.
+
+
+EKS-terraform/modules/
+├── aws-vpc/                    ← VPC + subnets + NAT + routes + SG
+├── aws-eks-cluster/            ← EKS + OIDC + cluster IAM role + access
+├── aws-eks-node-groups/        ← Node groups + worker IAM role + policies
+├── aws-eks-addons/             ← Only core addons (vpc-cni, coredns, kube-proxy, pod-identity)
+├── aws-ebs-csi/                ← EBS CSI IAM + pod identity + addon (NEW)
+├── aws-ec2-admin/              ← EC2 + EIP + admin role + scheduler + tool.sh
+├── aws-ses-email/              ← SES + SES IAM + pod identity
+├── aws-secrets-manager/        ← 3 secrets with all key-values pre-filled
+├── helm-cluster-autoscaler/    ← IAM + pod identity + Helm (self-contained)
+└── helm-external-secrets/      ← IAM + pod identity + Helm + ClusterSecretStore (self-contained)

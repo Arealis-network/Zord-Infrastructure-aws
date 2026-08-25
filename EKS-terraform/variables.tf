@@ -76,6 +76,22 @@ variable "evidence_signing_key_secret_name" {
 }
 
 ############################
+# S3 access settings
+############################
+
+variable "s3_workload_namespace" {
+  description = "Kubernetes namespace where S3 workloads run."
+  type        = string
+  default     = "zord"
+}
+
+variable "s3_workload_service_account" {
+  description = "Kubernetes service account for pods that need S3 + KMS access."
+  type        = string
+  default     = "zord-aws-access"
+}
+
+############################
 # SES email settings
 ############################
 

@@ -12,3 +12,5 @@ override.tf.json
 *.tfvars.json
 
 docs/
+
+.kiro/

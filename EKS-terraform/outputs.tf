@@ -9,17 +9,17 @@ output "environment" {
 
 output "cluster_name" {
   description = "EKS cluster name."
-  value       = aws_eks_cluster.eks.name
+  value       = module.eks.cluster_name
 }
 
 output "cluster_endpoint" {
   description = "EKS cluster API server endpoint."
-  value       = aws_eks_cluster.eks.endpoint
+  value       = module.eks.cluster_endpoint
 }
 
 output "cluster_arn" {
   description = "EKS cluster ARN."
-  value       = aws_eks_cluster.eks.arn
+  value       = module.eks.cluster_arn
 }
 
 output "cluster_admin_principal_arn" {
@@ -33,23 +33,17 @@ output "cluster_admin_principal_arn" {
 
 output "vpc_id" {
   description = "VPC ID used by the EKS cluster."
-  value       = aws_vpc.eks_vpc.id
+  value       = module.vpc.vpc_id
 }
 
 output "public_subnet_ids" {
   description = "Public subnet IDs."
-  value = [
-    aws_subnet.public1.id,
-    aws_subnet.public2.id
-  ]
+  value       = module.vpc.public_subnet_ids
 }
 
 output "private_subnet_ids" {
   description = "Private subnet IDs."
-  value = [
-    aws_subnet.private1.id,
-    aws_subnet.private2.id
-  ]
+  value       = module.vpc.private_subnet_ids
 }
 
 ############################
@@ -58,17 +52,17 @@ output "private_subnet_ids" {
 
 output "stateful_node_group_name" {
   description = "Stateful (on-demand) node group name."
-  value       = aws_eks_node_group.stateful.node_group_name
+  value       = module.node_groups.stateful_node_group_name
 }
 
 output "stateless_node_group_name" {
   description = "Stateless (spot) node group name."
-  value       = aws_eks_node_group.stateless.node_group_name
+  value       = module.node_groups.stateless_node_group_name
 }
 
 output "node_role_arn" {
   description = "IAM role ARN attached to the EKS worker nodes."
-  value       = aws_iam_role.worker_role.arn
+  value       = module.node_groups.worker_role_arn
 }
 
 ############################
@@ -77,7 +71,7 @@ output "node_role_arn" {
 
 output "ec2_public_ip" {
   description = "Static public IP (Elastic IP) of the EC2 admin instance."
-  value       = aws_eip.admin.public_ip
+  value       = module.ec2_admin.ec2_public_ip
 }
 
 ############################
@@ -86,7 +80,7 @@ output "ec2_public_ip" {
 
 output "ebs_csi_role_arn" {
   description = "IAM role ARN used by the EBS CSI driver."
-  value       = aws_iam_role.ebs_csi_role.arn
+  value       = module.ebs_csi.role_arn
 }
 
 ############################
@@ -95,12 +89,12 @@ output "ebs_csi_role_arn" {
 
 output "cluster_autoscaler_role_arn" {
   description = "IAM role ARN used by the Cluster Autoscaler."
-  value       = aws_iam_role.cluster_autoscaler_role.arn
+  value       = module.cluster_autoscaler.role_arn
 }
 
 output "external_secrets_role_arn" {
   description = "IAM role ARN used by External Secrets Operator."
-  value       = aws_iam_role.external_secrets_role.arn
+  value       = module.external_secrets.role_arn
 }
 
 ############################
@@ -109,12 +103,12 @@ output "external_secrets_role_arn" {
 
 output "oidc_provider_arn" {
   description = "OIDC provider ARN for the EKS cluster."
-  value       = aws_iam_openid_connect_provider.eks.arn
+  value       = module.eks.oidc_provider_arn
 }
 
 output "oidc_provider_url" {
   description = "OIDC provider URL for the EKS cluster."
-  value       = aws_iam_openid_connect_provider.eks.url
+  value       = module.eks.oidc_provider_url
 }
 
 ############################
@@ -123,20 +117,57 @@ output "oidc_provider_url" {
 
 output "ses_domain" {
   description = "SES domain identity."
-  value       = aws_ses_domain_identity.this.domain
+  value       = module.ses.ses_domain
 }
 
 output "ses_verification_token" {
   description = "TXT record value for SES domain verification."
-  value       = aws_ses_domain_identity.this.verification_token
+  value       = module.ses.ses_verification_token
 }
 
 output "ses_dkim_tokens" {
   description = "DKIM CNAME tokens for SES."
-  value       = aws_ses_domain_dkim.this.dkim_tokens
+  value       = module.ses.ses_dkim_tokens
 }
 
 output "ses_send_role_arn" {
   description = "IAM role ARN used by workload pods to send SES emails."
-  value       = aws_iam_role.ses_send_role.arn
+  value       = module.ses.ses_send_role_arn
+}
+
+############################
+# kms output
+############################
+
+output "s3_kms_key_arn" {
+  description = "KMS key ARN used for S3 bucket encryption."
+  value       = module.kms.s3_kms_key_arn
+}
+
+output "s3_kms_key_id" {
+  description = "KMS key ID used for S3 bucket encryption."
+  value       = module.kms.s3_kms_key_id
+}
+
+############################
+# s3 output
+############################
+
+output "s3_bucket_names" {
+  description = "Map of bucket keys to bucket names."
+  value       = module.s3_buckets.bucket_names
+}
+
+output "s3_access_role_arn" {
+  description = "Map of per-service S3 IAM role ARNs (PLAT-07 least privilege)."
+  value       = module.s3_access.role_arns
+}
+
+############################
+# acm output
+############################
+
+output "acm_certificate_arn" {
+  description = "ACM wildcard certificate ARN (auto-fetched from AWS)."
+  value       = data.aws_acm_certificate.wildcard.arn
 }

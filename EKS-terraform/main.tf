@@ -10,6 +10,14 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.0"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
   }
 }
 
@@ -21,6 +29,20 @@ provider "aws" {
   }
 }
 
+provider "helm" {
+  kubernetes {
+    host                   = module.eks.cluster_endpoint
+    cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
+    token                  = data.aws_eks_cluster_auth.this.token
+  }
+}
+
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
+  token                  = data.aws_eks_cluster_auth.this.token
+}
+
 data "aws_caller_identity" "current" {}
 data "aws_availability_zones" "available" {
   state = "available"
@@ -28,6 +50,18 @@ data "aws_availability_zones" "available" {
 
 data "aws_ssm_parameter" "amazon_linux_2023_ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
+data "aws_acm_certificate" "wildcard" {
+  domain      = "*.${var.ses_domain}"
+  statuses    = ["ISSUED"]
+  most_recent = true
+}
+
+data "aws_eks_cluster_auth" "this" {
+  name = local.cluster_name
+
+  depends_on = [module.eks]
 }
 
 locals {
@@ -49,12 +83,6 @@ locals {
     Cluster     = local.cluster_name
   }
 
-  external_secret_arns = [
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.app_secret_name}*",
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.edge_signing_key_secret_name}*",
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.evidence_signing_key_secret_name}*"
-  ]
-
   # Use different CIDR ranges per environment so both can coexist in the same account
   # production: 10.0.0.0/16, staging: 10.1.0.0/16
   vpc_cidr      = var.environment == "production" ? "10.0.0.0/16" : "10.1.0.0/16"
@@ -62,1158 +90,211 @@ locals {
   public2_cidr  = var.environment == "production" ? "10.0.2.0/24" : "10.1.2.0/24"
   private1_cidr = var.environment == "production" ? "10.0.3.0/24" : "10.1.3.0/24"
   private2_cidr = var.environment == "production" ? "10.0.4.0/24" : "10.1.4.0/24"
-}
 
-############################
-# VPC
-############################
-
-resource "aws_vpc" "eks_vpc" {
-
-  cidr_block           = local.vpc_cidr
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-
-  tags = {
-    Name = local.vpc_name_prefix
-  }
-}
-
-resource "aws_internet_gateway" "igw" {
-
-  vpc_id = aws_vpc.eks_vpc.id
-
-  tags = {
-    Name = "${local.vpc_name_prefix} igw"
-  }
-}
-
-############################
-# SUBNETS
-############################
-
-resource "aws_subnet" "public1" {
-
-  vpc_id                  = aws_vpc.eks_vpc.id
-  cidr_block              = local.public1_cidr
-  availability_zone       = local.availability_zones[0]
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name                     = "${local.vpc_name_prefix} public subnet 1"
-    "kubernetes.io/role/elb" = "1"
-  }
-}
-
-resource "aws_subnet" "public2" {
-
-  vpc_id                  = aws_vpc.eks_vpc.id
-  cidr_block              = local.public2_cidr
-  availability_zone       = local.availability_zones[1]
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name                     = "${local.vpc_name_prefix} public subnet 2"
-    "kubernetes.io/role/elb" = "1"
-  }
-}
-
-resource "aws_subnet" "private1" {
-
-  vpc_id            = aws_vpc.eks_vpc.id
-  cidr_block        = local.private1_cidr
-  availability_zone = local.availability_zones[0]
-
-  tags = {
-    Name                              = "${local.vpc_name_prefix} private subnet 1"
-    "kubernetes.io/role/internal-elb" = "1"
-  }
-}
-
-resource "aws_subnet" "private2" {
-
-  vpc_id            = aws_vpc.eks_vpc.id
-  cidr_block        = local.private2_cidr
-  availability_zone = local.availability_zones[1]
-
-  tags = {
-    Name                              = "${local.vpc_name_prefix} private subnet 2"
-    "kubernetes.io/role/internal-elb" = "1"
-  }
-}
-
-############################
-# NAT GATEWAY
-############################
-
-resource "aws_eip" "nat" {
-  domain = "vpc"
-
-  tags = {
-    Name = "${local.vpc_name_prefix} nat eip"
-  }
-}
-
-resource "aws_nat_gateway" "nat" {
-
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public1.id
-
-  tags = {
-    Name = "${local.vpc_name_prefix} nat gateway"
-  }
-}
-
-############################
-# ROUTE TABLES
-############################
-
-resource "aws_route_table" "public" {
-
-  vpc_id = aws_vpc.eks_vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
-  }
-
-  tags = {
-    Name = "${local.vpc_name_prefix} public route table"
-  }
-}
-
-resource "aws_route_table_association" "pub1" {
-
-  subnet_id      = aws_subnet.public1.id
-  route_table_id = aws_route_table.public.id
-}
-
-resource "aws_route_table_association" "pub2" {
-
-  subnet_id      = aws_subnet.public2.id
-  route_table_id = aws_route_table.public.id
-}
-
-resource "aws_route_table" "private" {
-
-  vpc_id = aws_vpc.eks_vpc.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat.id
-  }
-
-  tags = {
-    Name = "${local.vpc_name_prefix} private route table"
-  }
-}
-
-resource "aws_route_table_association" "priv1" {
-
-  subnet_id      = aws_subnet.private1.id
-  route_table_id = aws_route_table.private.id
-}
-
-resource "aws_route_table_association" "priv2" {
-
-  subnet_id      = aws_subnet.private2.id
-  route_table_id = aws_route_table.private.id
-}
-
-resource "aws_security_group" "allow_all" {
-
-  name        = "${local.vpc_resource_prefix}-allow-all-sg"
-  description = "Allow all inbound and outbound traffic"
-  vpc_id      = aws_vpc.eks_vpc.id
-
-  ingress {
-
-    description = "Allow all inbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-
-    description = "Allow all outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "${local.vpc_name_prefix} allow all sg"
-  }
-}
-############################
-# IAM ROLE - CLUSTER
-############################
-
-resource "aws_iam_role" "cluster_role" {
-
-  name = "${local.eks_resource_prefix}-cluster-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "eks.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} cluster role"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "cluster_policy" {
-
-  role       = aws_iam_role.cluster_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-}
-
-############################
-# IAM ROLE - NODE GROUP
-############################
-
-resource "aws_iam_role" "worker_role" {
-
-  name = "${local.eks_resource_prefix}-worker-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} worker role"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "worker_node" {
-
-  role       = aws_iam_role.worker_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-}
-
-resource "aws_iam_role_policy_attachment" "cni" {
-
-  role       = aws_iam_role.worker_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-}
-
-resource "aws_iam_role_policy_attachment" "ecr" {
-
-  role       = aws_iam_role.worker_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-}
-
-resource "aws_iam_role_policy_attachment" "worker_alb" {
-
-  role       = aws_iam_role.worker_role.name
-  policy_arn = "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess"
-}
-
-resource "aws_iam_role_policy_attachment" "worker_ec2" {
-
-  role       = aws_iam_role.worker_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
-}
-
-############################
-# EKS CLUSTER
-############################
-
-resource "aws_eks_cluster" "eks" {
-
-  name     = local.cluster_name
-  role_arn = aws_iam_role.cluster_role.arn
-  version  = var.cluster_version
-
-  access_config {
-    authentication_mode                         = "API_AND_CONFIG_MAP"
-    bootstrap_cluster_creator_admin_permissions = true
-  }
-
-  vpc_config {
-
-    subnet_ids = [
-      aws_subnet.private1.id,
-      aws_subnet.private2.id
-    ]
-
-    endpoint_public_access = true
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.cluster_policy
-  ]
-
-  tags = {
-    Name = "${local.eks_name_prefix} cluster"
-  }
-}
-
-############################
-# OIDC PROVIDER
-############################
-
-data "tls_certificate" "eks" {
-  url = aws_eks_cluster.eks.identity[0].oidc[0].issuer
-
-  depends_on = [aws_eks_cluster.eks]
-}
-
-resource "aws_iam_openid_connect_provider" "eks" {
-
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
-  url             = aws_eks_cluster.eks.identity[0].oidc[0].issuer
-
-  depends_on = [aws_eks_cluster.eks]
-
-  tags = {
-    Name = "${local.eks_name_prefix} oidc provider"
-  }
-}
-
-############################
-# EKS ACCESS
-############################
-
-resource "aws_eks_access_entry" "cluster_admin" {
-  count = var.manage_cluster_admin_access_entry ? 1 : 0
-
-  cluster_name  = aws_eks_cluster.eks.name
-  principal_arn = local.admin_principal_arn
-  type          = "STANDARD"
-
-  tags = {
-    Name = "${local.eks_name_prefix} cluster admin access entry"
-  }
-}
-
-resource "aws_eks_access_policy_association" "cluster_admin" {
-  count = var.manage_cluster_admin_access_entry ? 1 : 0
-
-  cluster_name  = aws_eks_cluster.eks.name
-  principal_arn = local.admin_principal_arn
-  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-
-  access_scope {
-    type = "cluster"
-  }
-
-  depends_on = [
-    aws_eks_access_entry.cluster_admin
-  ]
-}
-
-data "aws_eks_cluster" "eks" {
-  name = aws_eks_cluster.eks.name
-
-  depends_on = [
-    aws_eks_cluster.eks
-  ]
-}
-
-data "aws_eks_cluster_auth" "eks" {
-  name = aws_eks_cluster.eks.name
-
-  depends_on = [
-    aws_eks_cluster.eks
+  # Secret ARNs for External Secrets Operator
+  external_secret_arns = [
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.app_secret_name}*",
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.edge_signing_key_secret_name}*",
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.evidence_signing_key_secret_name}*"
   ]
 }
 
 ############################
-# NODE GROUP - STATEFUL (on-demand)
+# VPC MODULE
 ############################
 
-resource "aws_launch_template" "stateful" {
+module "vpc" {
+  source = "./modules/aws-vpc"
 
-  name_prefix            = "${local.node_group_name}-stateful-"
-  update_default_version = true
-
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
-
-  tag_specifications {
-    resource_type = "instance"
-
-    tags = {
-      Name = "${local.eks_name_prefix} stateful node"
-    }
-  }
-
-  tag_specifications {
-    resource_type = "volume"
-
-    tags = {
-      Name = "${local.eks_name_prefix} stateful node volume"
-    }
-  }
-
-  tags = {
-    Name = "${local.eks_name_prefix} stateful launch template"
-  }
-}
-
-resource "aws_eks_node_group" "stateful" {
-
-  cluster_name    = aws_eks_cluster.eks.name
-  node_group_name = "${local.node_group_name}-stateful"
-
-  node_role_arn = aws_iam_role.worker_role.arn
-  version       = var.cluster_version
-
-  subnet_ids = [
-    aws_subnet.private1.id,
-    aws_subnet.private2.id
-  ]
-
-  instance_types = ["t3.xlarge"]
-
-  scaling_config {
-    desired_size = 1
-    max_size     = 3
-    min_size     = 1
-  }
-
-  labels = {
-    workload = "stateful"
-  }
-
-  taint {
-    key    = "workload"
-    value  = "stateful"
-    effect = "NO_SCHEDULE"
-  }
-
-  launch_template {
-    id      = aws_launch_template.stateful.id
-    version = aws_launch_template.stateful.latest_version
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.worker_node,
-    aws_iam_role_policy_attachment.cni,
-    aws_iam_role_policy_attachment.ecr
-  ]
-
-  tags = {
-    Name = "${local.eks_name_prefix} stateful node group"
-  }
+  environment         = var.environment
+  aws_region          = var.aws_region
+  vpc_name_prefix     = local.vpc_name_prefix
+  vpc_resource_prefix = local.vpc_resource_prefix
+  vpc_cidr            = local.vpc_cidr
+  public1_cidr        = local.public1_cidr
+  public2_cidr        = local.public2_cidr
+  private1_cidr       = local.private1_cidr
+  private2_cidr       = local.private2_cidr
+  availability_zones  = local.availability_zones
 }
 
 ############################
-# NODE GROUP - STATELESS (spot)
+# EKS CLUSTER MODULE
 ############################
 
-resource "aws_launch_template" "stateless" {
+module "eks" {
+  source = "./modules/aws-eks-cluster"
 
-  name_prefix            = "${local.node_group_name}-stateless-"
-  update_default_version = true
-
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
-
-  tag_specifications {
-    resource_type = "instance"
-
-    tags = {
-      Name = "${local.eks_name_prefix} stateless node"
-    }
-  }
-
-  tag_specifications {
-    resource_type = "volume"
-
-    tags = {
-      Name = "${local.eks_name_prefix} stateless node volume"
-    }
-  }
-
-  tags = {
-    Name = "${local.eks_name_prefix} stateless launch template"
-  }
-}
-
-resource "aws_eks_node_group" "stateless" {
-
-  cluster_name    = aws_eks_cluster.eks.name
-  node_group_name = "${local.node_group_name}-stateless"
-
-  node_role_arn = aws_iam_role.worker_role.arn
-  version       = var.cluster_version
-
-  subnet_ids = [
-    aws_subnet.private1.id,
-    aws_subnet.private2.id
-  ]
-
-  instance_types = ["t3.large", "t3.xlarge", "m5.large"]
-  capacity_type  = "SPOT"
-
-  scaling_config {
-    desired_size = 4
-    max_size     = 20
-    min_size     = 1
-  }
-
-  labels = {
-    workload = "stateless"
-  }
-
-  launch_template {
-    id      = aws_launch_template.stateless.id
-    version = aws_launch_template.stateless.latest_version
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.worker_node,
-    aws_iam_role_policy_attachment.cni,
-    aws_iam_role_policy_attachment.ecr
-  ]
-
-  tags = {
-    Name = "${local.eks_name_prefix} stateless node group"
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateful_instance_name" {
-
-  autoscaling_group_name = aws_eks_node_group.stateful.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "Name"
-    value               = "${local.eks_name_prefix} stateful node"
-    propagate_at_launch = true
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateful_autoscaler_owned" {
-
-  autoscaling_group_name = aws_eks_node_group.stateful.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "k8s.io/cluster-autoscaler/${local.cluster_name}"
-    value               = "owned"
-    propagate_at_launch = false
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateful_autoscaler_enabled" {
-
-  autoscaling_group_name = aws_eks_node_group.stateful.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "k8s.io/cluster-autoscaler/enabled"
-    value               = "true"
-    propagate_at_launch = false
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateless_instance_name" {
-
-  autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "Name"
-    value               = "${local.eks_name_prefix} stateless node"
-    propagate_at_launch = true
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateless_autoscaler_owned" {
-
-  autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "k8s.io/cluster-autoscaler/${local.cluster_name}"
-    value               = "owned"
-    propagate_at_launch = false
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateless_autoscaler_enabled" {
-
-  autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "k8s.io/cluster-autoscaler/enabled"
-    value               = "true"
-    propagate_at_launch = false
-  }
+  cluster_name                      = local.cluster_name
+  cluster_version                   = var.cluster_version
+  private_subnet_ids                = module.vpc.private_subnet_ids
+  eks_name_prefix                   = local.eks_name_prefix
+  eks_resource_prefix               = local.eks_resource_prefix
+  admin_principal_arn               = local.admin_principal_arn
+  manage_cluster_admin_access_entry = var.manage_cluster_admin_access_entry
 }
 
 ############################
-# EC2 IAM ACCESS
+# NODE GROUPS MODULE
 ############################
 
-resource "aws_iam_role" "ec2_admin_role" {
+module "node_groups" {
+  source = "./modules/aws-eks-node-groups"
 
-  name = "${local.eks_resource_prefix}-ec2-admin-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} ec2 admin role"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "ec2_admin_access" {
-
-  role       = aws_iam_role.ec2_admin_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
-}
-
-resource "aws_iam_instance_profile" "ec2_admin_profile" {
-
-  name = "${local.eks_resource_prefix}-ec2-admin-profile"
-  role = aws_iam_role.ec2_admin_role.name
-
-  tags = {
-    Name = "${local.eks_name_prefix} ec2 admin profile"
-  }
-}
-
-resource "aws_eks_access_entry" "ec2_admin_role" {
-  cluster_name  = aws_eks_cluster.eks.name
-  principal_arn = aws_iam_role.ec2_admin_role.arn
-  type          = "STANDARD"
-
-  tags = {
-    Name = "${local.eks_name_prefix} ec2 admin access entry"
-  }
-}
-
-resource "aws_eks_access_policy_association" "ec2_admin_role" {
-  cluster_name  = aws_eks_cluster.eks.name
-  principal_arn = aws_iam_role.ec2_admin_role.arn
-  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-
-  access_scope {
-    type = "cluster"
-  }
-
-  depends_on = [
-    aws_eks_access_entry.ec2_admin_role
-  ]
-}
-
-
-resource "aws_instance" "eks" {
-  ami                    = data.aws_ssm_parameter.amazon_linux_2023_ami.value
-  instance_type          = "t3.large"
-  subnet_id              = aws_subnet.public1.id
-  iam_instance_profile   = aws_iam_instance_profile.ec2_admin_profile.name
-  vpc_security_group_ids = [aws_security_group.allow_all.id]
-  root_block_device {
-    volume_size = "60"
-  }
-
-
-  tags = {
-    Name = "${local.eks_name_prefix} admin instance"
-  }
-
-  user_data = file("${path.module}/tool.sh")
-
-  lifecycle {
-    ignore_changes = [user_data, ami]
-  }
+  cluster_name        = module.eks.cluster_name
+  cluster_version     = var.cluster_version
+  private_subnet_ids  = module.vpc.private_subnet_ids
+  eks_name_prefix     = local.eks_name_prefix
+  eks_resource_prefix = local.eks_resource_prefix
+  node_group_name     = local.node_group_name
 }
 
 ############################
-# EC2 ELASTIC IP (static)
+# CORE ADDONS MODULE
 ############################
 
-resource "aws_eip" "admin" {
-  domain = "vpc"
+module "addons" {
+  source = "./modules/aws-eks-addons"
 
-  tags = {
-    Name = "${local.eks_name_prefix} admin eip"
-  }
-}
-
-resource "aws_eip_association" "admin" {
-  instance_id   = aws_instance.eks.id
-  allocation_id = aws_eip.admin.id
+  cluster_name            = module.eks.cluster_name
+  stateful_node_group_id  = module.node_groups.stateful_node_group_id
+  stateless_node_group_id = module.node_groups.stateless_node_group_id
 }
 
 ############################
-# EC2 AUTO-STOP SCHEDULE
+# EBS CSI MODULE
 ############################
 
-resource "aws_scheduler_schedule" "ec2_stop" {
-  name       = "${local.eks_resource_prefix}-ec2-stop-night"
-  group_name = "default"
+module "ebs_csi" {
+  source = "./modules/aws-ebs-csi"
 
-  flexible_time_window {
-    mode = "OFF"
-  }
-
-  # Stop at 10 PM IST (4:30 PM UTC) every day
-  schedule_expression          = "cron(30 16 * * ? *)"
-  schedule_expression_timezone = "Asia/Kolkata"
-
-  target {
-    arn      = "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
-    role_arn = aws_iam_role.scheduler_role.arn
-
-    input = jsonencode({
-      InstanceIds = [aws_instance.eks.id]
-    })
-  }
-}
-
-resource "aws_scheduler_schedule" "ec2_start" {
-  name       = "${local.eks_resource_prefix}-ec2-start-morning"
-  group_name = "default"
-
-  flexible_time_window {
-    mode = "OFF"
-  }
-
-  # Start at 9 AM IST (3:30 AM UTC) every weekday (Mon-Fri)
-  schedule_expression          = "cron(30 3 ? * MON-FRI *)"
-  schedule_expression_timezone = "Asia/Kolkata"
-
-  target {
-    arn      = "arn:aws:scheduler:::aws-sdk:ec2:startInstances"
-    role_arn = aws_iam_role.scheduler_role.arn
-
-    input = jsonencode({
-      InstanceIds = [aws_instance.eks.id]
-    })
-  }
-}
-
-resource "aws_iam_role" "scheduler_role" {
-
-  name = "${local.eks_resource_prefix}-scheduler-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "scheduler.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} scheduler role"
-  }
-}
-
-resource "aws_iam_role_policy" "scheduler_ec2" {
-
-  name = "${local.eks_resource_prefix}-scheduler-ec2-policy"
-  role = aws_iam_role.scheduler_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "ec2:StartInstances",
-        "ec2:StopInstances"
-      ]
-      Resource = aws_instance.eks.arn
-    }]
-  })
-}
-############################
-# EKS ADDONS
-############################
-
-resource "aws_eks_addon" "vpc_cni" {
-
-  cluster_name = aws_eks_cluster.eks.name
-  addon_name   = "vpc-cni"
-
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  configuration_values = jsonencode({
-    enableNetworkPolicy = "true"
-  })
-
-  depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
-}
-
-resource "aws_eks_addon" "coredns" {
-
-  cluster_name = aws_eks_cluster.eks.name
-  addon_name   = "coredns"
-
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
-}
-
-resource "aws_eks_addon" "kube_proxy" {
-
-  cluster_name = aws_eks_cluster.eks.name
-  addon_name   = "kube-proxy"
-
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
-}
-
-resource "aws_eks_addon" "pod_identity" {
-
-  cluster_name = aws_eks_cluster.eks.name
-  addon_name   = "eks-pod-identity-agent"
-
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  depends_on = [aws_eks_node_group.stateful, aws_eks_node_group.stateless]
-}
-
-
-resource "aws_iam_role" "ebs_csi_role" {
-
-  name = "${local.eks_resource_prefix}-ebs-csi-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "pods.eks.amazonaws.com"
-      }
-      Action = [
-        "sts:AssumeRole",
-        "sts:TagSession"
-      ]
-    }]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} ebs csi role"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "ebs_csi_policy" {
-
-  role       = aws_iam_role.ebs_csi_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
-}
-
-resource "aws_eks_pod_identity_association" "ebs_csi" {
-  cluster_name    = aws_eks_cluster.eks.name
-  namespace       = "kube-system"
-  service_account = "ebs-csi-controller-sa"
-
-  role_arn = aws_iam_role.ebs_csi_role.arn
-
-  depends_on = [
-    aws_iam_role_policy_attachment.ebs_csi_policy
-  ]
-}
-
-resource "aws_eks_addon" "ebs_csi" {
-
-  cluster_name                = aws_eks_cluster.eks.name
-  addon_name                  = "aws-ebs-csi-driver"
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  depends_on = [
-    aws_eks_node_group.stateful,
-    aws_eks_node_group.stateless,
-    aws_eks_pod_identity_association.ebs_csi
-  ]
+  cluster_name             = module.eks.cluster_name
+  eks_name_prefix          = local.eks_name_prefix
+  eks_resource_prefix      = local.eks_resource_prefix
+  pod_identity_addon_ready = module.addons.pod_identity_addon_id
 }
 
 ############################
-# CLUSTER AUTOSCALER
+# EC2 ADMIN MODULE
 ############################
 
-resource "aws_iam_policy" "cluster_autoscaler" {
+module "ec2_admin" {
+  source = "./modules/aws-ec2-admin"
 
-  name        = "${local.eks_resource_prefix}-cluster-autoscaler-policy"
-  description = "Allows Cluster Autoscaler to manage Auto Scaling Groups"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "autoscaling:DescribeAutoScalingGroups",
-          "autoscaling:DescribeAutoScalingInstances",
-          "autoscaling:DescribeLaunchConfigurations",
-          "autoscaling:DescribeScalingActivities",
-          "autoscaling:DescribeTags",
-          "ec2:DescribeImages",
-          "ec2:DescribeInstanceTypes",
-          "ec2:DescribeLaunchTemplateVersions",
-          "ec2:GetInstanceTypesFromInstanceRequirements",
-          "eks:DescribeNodegroup"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "autoscaling:SetDesiredCapacity",
-          "autoscaling:TerminateInstanceInAutoScalingGroup"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} cluster autoscaler policy"
-  }
-}
-
-resource "aws_iam_role" "cluster_autoscaler_role" {
-
-  name = "${local.eks_resource_prefix}-cluster-autoscaler-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "pods.eks.amazonaws.com"
-      }
-      Action = [
-        "sts:AssumeRole",
-        "sts:TagSession"
-      ]
-    }]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} cluster autoscaler role"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "cluster_autoscaler" {
-
-  role       = aws_iam_role.cluster_autoscaler_role.name
-  policy_arn = aws_iam_policy.cluster_autoscaler.arn
-}
-
-resource "aws_eks_pod_identity_association" "cluster_autoscaler" {
-
-  cluster_name    = aws_eks_cluster.eks.name
-  namespace       = "kube-system"
-  service_account = "cluster-autoscaler"
-
-  role_arn = aws_iam_role.cluster_autoscaler_role.arn
-
-  depends_on = [
-    aws_iam_role_policy_attachment.cluster_autoscaler,
-    aws_eks_addon.pod_identity
-  ]
+  eks_name_prefix     = local.eks_name_prefix
+  eks_resource_prefix = local.eks_resource_prefix
+  cluster_name        = module.eks.cluster_name
+  public_subnet_id    = module.vpc.public_subnet_1_id
+  security_group_id   = module.vpc.security_group_id
+  ami_id              = data.aws_ssm_parameter.amazon_linux_2023_ami.value
 }
 
 ############################
-# EXTERNAL SECRETS OPERATOR
+# SES MODULE
 ############################
 
-resource "aws_iam_policy" "external_secrets" {
+module "ses" {
+  source = "./modules/aws-ses-email"
 
-  name        = "${local.eks_resource_prefix}-external-secrets-policy"
-  description = "Allows External Secrets Operator to read required AWS Secrets Manager secrets"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:DescribeSecret"
-        ]
-        Resource = local.external_secret_arns
-      }
-    ]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} external secrets policy"
-  }
+  eks_name_prefix              = local.eks_name_prefix
+  eks_resource_prefix          = local.eks_resource_prefix
+  cluster_name                 = module.eks.cluster_name
+  aws_region                   = var.aws_region
+  account_id                   = data.aws_caller_identity.current.account_id
+  ses_domain                   = var.ses_domain
+  ses_workload_namespace       = var.ses_workload_namespace
+  ses_workload_service_account = var.ses_workload_service_account
+  pod_identity_addon_id        = module.addons.pod_identity_addon_id
 }
 
-resource "aws_iam_role" "external_secrets_role" {
 
-  name = "${local.eks_resource_prefix}-external-secrets-role"
+############################
+# KMS MODULE
+############################
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "pods.eks.amazonaws.com"
-      }
-      Action = [
-        "sts:AssumeRole",
-        "sts:TagSession"
-      ]
-    }]
-  })
+module "kms" {
+  source = "./modules/aws-kms"
 
-  tags = {
-    Name = "${local.eks_name_prefix} external secrets role"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "external_secrets" {
-
-  role       = aws_iam_role.external_secrets_role.name
-  policy_arn = aws_iam_policy.external_secrets.arn
-}
-
-resource "aws_eks_pod_identity_association" "external_secrets" {
-  cluster_name    = aws_eks_cluster.eks.name
-  namespace       = var.external_secrets_namespace
-  service_account = var.external_secrets_service_account
-
-  role_arn = aws_iam_role.external_secrets_role.arn
-
-  depends_on = [
-    aws_iam_role_policy_attachment.external_secrets,
-    aws_eks_addon.pod_identity
-  ]
+  environment         = var.environment
+  account_id          = data.aws_caller_identity.current.account_id
+  eks_name_prefix     = local.eks_name_prefix
+  eks_resource_prefix = local.eks_resource_prefix
 }
 
 ############################
-# SES EMAIL (OTP MFA)
+# S3 BUCKETS MODULE
 ############################
 
-resource "aws_ses_domain_identity" "this" {
-  domain = var.ses_domain
+module "s3_buckets" {
+  source = "./modules/aws-s3-buckets"
+
+  environment = var.environment
+  kms_key_arn = module.kms.s3_kms_key_arn
 }
 
-resource "aws_ses_domain_dkim" "this" {
-  domain = aws_ses_domain_identity.this.domain
+############################
+# S3 ACCESS MODULE (Pod Identity)
+############################
+
+module "s3_access" {
+  source = "./modules/aws-s3-access"
+
+  cluster_name        = module.eks.cluster_name
+  eks_name_prefix     = local.eks_name_prefix
+  eks_resource_prefix = local.eks_resource_prefix
+  namespace           = "zord"
+  kms_key_arn         = module.kms.s3_kms_key_arn
+
+  # Per-service bucket ARNs (PLAT-07 least privilege)
+  edge_bucket_arn       = module.s3_buckets.bucket_arns["edge_ingress"]
+  canonical_bucket_arn  = module.s3_buckets.bucket_arns["intent_canonical"]
+  nir_bucket_arn        = module.s3_buckets.bucket_arns["intent_nir"]
+  governance_bucket_arn = module.s3_buckets.bucket_arns["intent_governance"]
+  outcome_bucket_arn    = module.s3_buckets.bucket_arns["outcome_settlement_ingress"]
+  evidence_bucket_arn   = module.s3_buckets.bucket_arns["evidence_vault"]
+  pod_identity_addon_id = module.addons.pod_identity_addon_id
 }
 
-resource "aws_ses_domain_mail_from" "this" {
-  domain           = aws_ses_domain_identity.this.domain
-  mail_from_domain = "mail.${var.ses_domain}"
+############################
+# AWS SECRETS MANAGER MODULE
+############################
+
+module "secrets_manager" {
+  source = "./modules/aws-secrets-manager"
+
+  environment         = var.environment
+  s3_kms_key_arn      = module.kms.s3_kms_key_arn
+  acm_certificate_arn = data.aws_acm_certificate.wildcard.arn
 }
 
-resource "aws_ses_email_identity" "support" {
-  email = "support@${var.ses_domain}"
+############################
+# CLUSTER AUTOSCALER MODULE
+############################
+
+module "cluster_autoscaler" {
+  source = "./modules/helm-cluster-autoscaler"
+
+  cluster_name             = module.eks.cluster_name
+  aws_region               = var.aws_region
+  eks_name_prefix          = local.eks_name_prefix
+  eks_resource_prefix      = local.eks_resource_prefix
+  node_groups_ready        = module.node_groups.stateless_node_group_id
+  pod_identity_addon_ready = module.addons.pod_identity_addon_id
 }
 
-resource "aws_ses_email_identity" "no_reply" {
-  email = "no-reply@${var.ses_domain}"
-}
+############################
+# EXTERNAL SECRETS MODULE
+############################
 
-resource "aws_iam_policy" "ses_send" {
+module "external_secrets" {
+  source = "./modules/helm-external-secrets"
 
-  name        = "${local.eks_resource_prefix}-ses-send-policy"
-  description = "Allows workload pods to send emails via SES for OTP MFA"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ses:SendEmail",
-          "ses:SendRawEmail"
-        ]
-        Resource = [
-          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_domain}",
-          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/support@${var.ses_domain}",
-          "arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/no-reply@${var.ses_domain}"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ses:GetSendQuota",
-          "ses:GetSendStatistics"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} ses send policy"
-  }
-}
-
-resource "aws_iam_role" "ses_send_role" {
-
-  name = "${local.eks_resource_prefix}-ses-send-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "pods.eks.amazonaws.com"
-      }
-      Action = [
-        "sts:AssumeRole",
-        "sts:TagSession"
-      ]
-    }]
-  })
-
-  tags = {
-    Name = "${local.eks_name_prefix} ses send role"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "ses_send" {
-
-  role       = aws_iam_role.ses_send_role.name
-  policy_arn = aws_iam_policy.ses_send.arn
-}
-
-resource "aws_eks_pod_identity_association" "ses_send" {
-  cluster_name    = aws_eks_cluster.eks.name
-  namespace       = var.ses_workload_namespace
-  service_account = var.ses_workload_service_account
-
-  role_arn = aws_iam_role.ses_send_role.arn
-
-  depends_on = [
-    aws_iam_role_policy_attachment.ses_send,
-    aws_eks_addon.pod_identity
-  ]
+  cluster_name        = module.eks.cluster_name
+  aws_region          = var.aws_region
+  eks_name_prefix     = local.eks_name_prefix
+  eks_resource_prefix = local.eks_resource_prefix
+  namespace           = var.external_secrets_namespace
+  service_account     = var.external_secrets_service_account
+  secret_arns         = local.external_secret_arns
+  node_groups_ready   = module.node_groups.stateless_node_group_id
 }
