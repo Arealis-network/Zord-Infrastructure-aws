@@ -26,3 +26,13 @@ output "evidence_role_arn" {
   description = "IAM role ARN for zord-evidence S3 access."
   value       = aws_iam_role.s3_access["evidence"].arn
 }
+
+output "intelligence_role_arn" {
+  description = "IAM role ARN for zord-intelligence S3 read-only access."
+  value       = aws_iam_role.s3_access["intelligence"].arn
+}
+
+output "evidence_role_id" {
+  description = "IAM role ID for zord-evidence (used by KMS module to attach policy)."
+  value       = aws_iam_role.s3_access["evidence"].id
+}

@@ -10,18 +10,27 @@ locals {
     edge = {
       service_account = "zord-edge"
       bucket_arns     = [var.edge_bucket_arn]
+      actions         = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     }
     intent = {
       service_account = "zord-intent-engine"
       bucket_arns     = [var.canonical_bucket_arn, var.nir_bucket_arn, var.governance_bucket_arn]
+      actions         = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     }
     outcome = {
       service_account = "zord-outcome-engine"
       bucket_arns     = [var.outcome_bucket_arn]
+      actions         = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     }
     evidence = {
       service_account = "zord-evidence"
       bucket_arns     = [var.evidence_bucket_arn]
+      actions         = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    }
+    intelligence = {
+      service_account = "zord-intelligence"
+      bucket_arns     = [var.governance_bucket_arn]
+      actions         = ["s3:GetObject", "s3:ListBucket"]
     }
   }
 }
@@ -66,13 +75,9 @@ resource "aws_iam_role_policy" "s3_readwrite" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "S3ObjectAccess"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject",
-        ]
+        Sid      = "S3ObjectAccess"
+        Effect   = "Allow"
+        Action   = each.value.actions
         Resource = [for arn in each.value.bucket_arns : "${arn}/*"]
       },
       {

@@ -171,3 +171,26 @@ output "acm_certificate_arn" {
   description = "ACM wildcard certificate ARN (auto-fetched from AWS)."
   value       = data.aws_acm_certificate.wildcard.arn
 }
+
+############################
+# token enclave output
+############################
+
+output "token_enclave_kms_key_arn" {
+  description = "KMS key ARN for zord-token-enclave PII encryption."
+  value       = module.kms_token_enclave.kms_key_arn
+}
+
+output "token_enclave_role_arn" {
+  description = "IAM role ARN for zord-token-enclave KMS access."
+  value       = module.kms_token_enclave.role_arn
+}
+
+############################
+# evidence archive kms output
+############################
+
+output "evidence_kms_key_arn" {
+  description = "KMS key ARN for evidence archive encryption (NEW-P1-06)."
+  value       = module.kms_evidence_archive.kms_key_arn
+}

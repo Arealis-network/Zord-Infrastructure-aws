@@ -262,9 +262,39 @@ module "s3_access" {
 module "secrets_manager" {
   source = "./modules/aws-secrets-manager"
 
+  environment          = var.environment
+  s3_kms_key_arn       = module.kms.s3_kms_key_arn
+  acm_certificate_arn  = data.aws_acm_certificate.wildcard.arn
+  evidence_kms_key_arn = module.kms_evidence_archive.kms_key_arn
+}
+
+############################
+# TOKEN ENCLAVE KMS MODULE (TOK-03)
+############################
+
+module "kms_token_enclave" {
+  source = "./modules/aws-kms-token-enclave"
+
+  environment           = var.environment
+  account_id            = data.aws_caller_identity.current.account_id
+  cluster_name          = module.eks.cluster_name
+  eks_name_prefix       = local.eks_name_prefix
+  eks_resource_prefix   = local.eks_resource_prefix
+  pod_identity_addon_id = module.addons.pod_identity_addon_id
+}
+
+############################
+# EVIDENCE ARCHIVE KMS MODULE (NEW-P1-06)
+############################
+
+module "kms_evidence_archive" {
+  source = "./modules/aws-kms-evidence-archive"
+
   environment         = var.environment
-  s3_kms_key_arn      = module.kms.s3_kms_key_arn
-  acm_certificate_arn = data.aws_acm_certificate.wildcard.arn
+  account_id          = data.aws_caller_identity.current.account_id
+  eks_name_prefix     = local.eks_name_prefix
+  eks_resource_prefix = local.eks_resource_prefix
+  evidence_role_id    = module.s3_access.evidence_role_id
 }
 
 ############################

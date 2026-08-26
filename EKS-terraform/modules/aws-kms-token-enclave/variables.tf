@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════
-# AWS Secrets Manager — Variables
+# KMS Token Enclave — Variables
 # ═══════════════════════════════════════════════════════════════════
 
 variable "environment" {
@@ -7,17 +7,27 @@ variable "environment" {
   type        = string
 }
 
-variable "s3_kms_key_arn" {
-  description = "KMS key ARN for S3 encryption (auto-populated from KMS module)."
+variable "account_id" {
+  description = "AWS account ID."
   type        = string
 }
 
-variable "acm_certificate_arn" {
-  description = "ACM wildcard certificate ARN (auto-fetched from AWS)."
+variable "cluster_name" {
+  description = "EKS cluster name."
   type        = string
 }
 
-variable "evidence_kms_key_arn" {
-  description = "KMS key ARN for evidence archive encryption (NEW-P1-06, auto-populated)."
+variable "eks_name_prefix" {
+  description = "Display name prefix for tags."
+  type        = string
+}
+
+variable "eks_resource_prefix" {
+  description = "Resource name prefix."
+  type        = string
+}
+
+variable "pod_identity_addon_id" {
+  description = "Pod Identity addon ID (for depends_on)."
   type        = string
 }

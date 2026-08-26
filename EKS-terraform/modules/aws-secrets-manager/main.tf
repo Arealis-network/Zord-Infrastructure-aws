@@ -33,15 +33,14 @@ resource "aws_secretsmanager_secret_version" "app_secrets" {
     INTELLIGENCE_DB_PASSWORD    = "CHANGE_ME"
 
     # ── Encryption & Auth Keys ──
-    ZORD_VAULT_KEY                         = "CHANGE_ME"
-    INTERNAL_ADMIN_KEY                     = "CHANGE_ME"
-    MASTER_KEY                             = "CHANGE_ME"
-    TOKEN_SECRET                           = "CHANGE_ME"
-    JWT_SIGNING_SECRET                     = "CHANGE_ME"
-    ENCLAVE_INTERNAL_TOKEN                 = "CHANGE_ME"
-    EVIDENCE_SIGNING_PRIVATE_KEY_BASE64    = ""
-    EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64 = "CHANGE_ME"
-    TOKENIZED_DATA_HASH_MASTER_SECRET      = "CHANGE_ME"
+    ZORD_VAULT_KEY                      = "CHANGE_ME"
+    INTERNAL_ADMIN_KEY                  = "CHANGE_ME"
+    MASTER_KEY                          = "CHANGE_ME"
+    TOKEN_SECRET                        = "CHANGE_ME"
+    JWT_SIGNING_SECRET                  = "CHANGE_ME"
+    ENCLAVE_INTERNAL_TOKEN              = "CHANGE_ME"
+    EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 = ""
+    TOKENIZED_DATA_HASH_MASTER_SECRET   = "CHANGE_ME"
 
     # ── External API Keys ──
     GEMINI_API_KEYS = "CHANGE_ME"
@@ -59,6 +58,9 @@ resource "aws_secretsmanager_secret_version" "app_secrets" {
 
     # ── ACM Certificate ──
     ACM_CERTIFICATE_ARN = var.acm_certificate_arn
+
+    # ── Evidence Archive KMS (NEW-P1-06) ──
+    EVIDENCE_KMS_KEY_ARN = var.evidence_kms_key_arn
 
     # ── Relay Auth Tokens ──
     RELAY_SERVICES_0_AUTH_TOKEN = "CHANGE_ME"
