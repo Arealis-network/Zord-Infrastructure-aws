@@ -92,8 +92,13 @@ resource "helm_release" "external_secrets" {
 # Uses Pod Identity (no explicit auth — EKS injects creds automatically)
 # ─────────────────────────────────────────
 
-resource "kubernetes_manifest" "cluster_secret_store" {
-  manifest = {
+# NOTE: uses kubectl_manifest (gavinbunney/kubectl), NOT kubernetes_manifest.
+# kubernetes_manifest contacts the cluster API during PLAN to fetch CRD schemas,
+# which fails when the EKS cluster does not exist yet (fresh apply). kubectl_manifest
+# applies YAML at APPLY time only and never touches the cluster during plan, so a
+# single `terraform apply` can create the cluster AND this ClusterSecretStore.
+resource "kubectl_manifest" "cluster_secret_store" {
+  yaml_body = yamlencode({
     apiVersion = "external-secrets.io/v1beta1"
     kind       = "ClusterSecretStore"
     metadata = {
@@ -107,7 +112,7 @@ resource "kubernetes_manifest" "cluster_secret_store" {
         }
       }
     }
-  }
+  })
 
   depends_on = [helm_release.external_secrets]
 }

@@ -78,9 +78,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          # Pinned to 1.10.5 — last version before DynamoDB state locking
-          # (dynamodb_table) was deprecated. Keeps DynamoDB locking warning-free.
-          terraform_version: "1.10.5"
+          # Pinned to 1.11.4 — S3-native state locking (use_lockfile) is GA here.
+          # No DynamoDB needed; state locking is handled by the S3 bucket itself.
+          terraform_version: "1.11.4"
           terraform_wrapper: false
 
       - name: Configure AWS credentials (OIDC)
@@ -100,14 +100,13 @@ jobs:
             -backend-config="key=eks/production/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
             -backend-config="encrypt=true" \
-            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
-            2>&1
+            -backend-config="use_lockfile=true"
 
       - name: Terraform Validate
         run: terraform validate
 
       - name: Terraform Plan (production)
-        run: terraform plan -var="environment=production" -no-color 2>&1
+        run: terraform plan -var="environment=production" -no-color -input=false -lock=false
 
   # ════════════════════════════════════════════════════════════════
   # Manual — Plan / Apply / Destroy (deploys everything at once)
@@ -137,9 +136,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          # Pinned to 1.10.5 — last version before DynamoDB state locking
-          # (dynamodb_table) was deprecated. Keeps DynamoDB locking warning-free.
-          terraform_version: "1.10.5"
+          # Pinned to 1.11.4 — S3-native state locking (use_lockfile) is GA here.
+          # No DynamoDB needed; state locking is handled by the S3 bucket itself.
+          terraform_version: "1.11.4"
           terraform_wrapper: false
 
       - name: Configure AWS credentials (OIDC)
@@ -164,8 +163,7 @@ jobs:
             -backend-config="key=${{ env.STATE_KEY }}" \
             -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
             -backend-config="encrypt=true" \
-            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
-            2>&1
+            -backend-config="use_lockfile=true"
 
       - name: Terraform Validate
         run: terraform validate

@@ -18,6 +18,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
@@ -55,6 +59,16 @@ provider "kubernetes" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
   token                  = data.aws_eks_cluster_auth.this.token
+}
+
+# kubectl provider — used for CRD manifests (e.g. ClusterSecretStore) that must
+# NOT contact the cluster during plan. load_config_file=false keeps it from
+# reading local kubeconfig; it authenticates the same way as the k8s provider.
+provider "kubectl" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
+  token                  = data.aws_eks_cluster_auth.this.token
+  load_config_file       = false
 }
 
 data "aws_caller_identity" "current" {}
