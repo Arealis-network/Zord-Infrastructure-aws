@@ -19,6 +19,9 @@ Order:
 8. GitHub repository secrets & variables
 ```
 
+> State locking uses **DynamoDB**. The workflow pins Terraform 1.10.5 so the
+> `dynamodb_table` backend option stays warning-free.
+
 ---
 
 ## 1. S3 bucket — Terraform state
@@ -48,9 +51,8 @@ Prevents two applies from corrupting the state at the same time.
 4. **Table settings:** Default settings (On-demand capacity)
 5. **Create table.**
 
-> The workflow passes this table to `terraform init` via
-> `-backend-config="dynamodb_table=..."`. It's referenced by the GitHub variable
-> `TF_LOCK_TABLE`.
+> Referenced by the GitHub variable `TF_LOCK_TABLE`, passed to `terraform init`
+> via `-backend-config="dynamodb_table=..."`.
 
 ---
 

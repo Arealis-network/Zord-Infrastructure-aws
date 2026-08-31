@@ -78,6 +78,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
+          # Pinned to 1.10.5 — last version before DynamoDB state locking
+          # (dynamodb_table) was deprecated. Keeps DynamoDB locking warning-free.
+          terraform_version: "1.10.5"
           terraform_wrapper: false
 
       - name: Configure AWS credentials (OIDC)
@@ -133,6 +136,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
+          # Pinned to 1.10.5 — last version before DynamoDB state locking
+          # (dynamodb_table) was deprecated. Keeps DynamoDB locking warning-free.
+          terraform_version: "1.10.5"
           terraform_wrapper: false
 
       - name: Configure AWS credentials (OIDC)
