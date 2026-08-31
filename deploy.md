@@ -26,15 +26,21 @@ CloudFront needs the Kong ALB to exist, so it comes up on the second apply
 
 ## Step 0 — One-time prerequisites
 
-Create these once in the AWS account (`673698305621`, region `ap-south-1`):
+**📄 Full click-by-click AWS Console instructions are in [`manual.md`](./manual.md).**
+Do everything in that file once, then come back to Step 1.
+
+Summary of what `manual.md` creates in the AWS account (`673698305621`, `ap-south-1`):
 
 | Requirement | Where to create |
 |---|---|
-| OIDC Identity Provider | IAM → Identity providers → Add (`token.actions.githubusercontent.com`) |
-| IAM Role for GitHub Actions | IAM → Roles → `zord-infrastructure-aws-role` (OIDC trust for this repo) |
 | S3 Terraform state bucket | S3 → `zord-infrastructure-aws-tf-state` (versioned, encrypted, private) |
+| DynamoDB lock table | DynamoDB → `zord-infrastructure-aws-tf-lock` (partition key `LockID`) |
+| OIDC Identity Provider | IAM → Identity providers → `token.actions.githubusercontent.com` |
+| IAM Role for GitHub Actions | IAM → Roles → `zord-infrastructure-aws-role` (OIDC trust, 2h max session) |
+| Route 53 hosted zone | Route 53 → `zordnet.com` (delegate NS at registrar) |
 | ACM cert (ALB) | ACM in **ap-south-1** → `*.zordnet.com` — must be ISSUED |
 | ACM cert (CloudFront) | ACM in **us-east-1** → `*.zordnet.com` — CloudFront ONLY accepts us-east-1 certs |
+| GitHub secrets + variables | See `manual.md` §8 |
 
 > You need **two** `*.zordnet.com` certs — one in ap-south-1 (for the ALB) and
 > one in us-east-1 (for CloudFront). Both are free and DNS-validated.
@@ -43,18 +49,22 @@ Create these once in the AWS account (`673698305621`, region `ap-south-1`):
 
 `Repo → Settings → Secrets and variables → Actions → Secrets`
 
+Only the PAT is truly sensitive. The role ARN and bucket name are not secrets —
+they go in **Variables** below.
+
 | Secret | Value |
 |---|---|
-| `AWS_ROLE_ARN` | `arn:aws:iam::673698305621:role/zord-infrastructure-aws-role` |
-| `TF_STATE_BUCKET` | `zord-infrastructure-aws-tf-state` |
-| `GITHUB_PAT_ARGOCD` | GitHub Personal Access Token (ArgoCD reads the app repo) |
+| `ARGOCD_GITHUB_PAT` | GitHub Personal Access Token (ArgoCD reads the app repo). Name must NOT start with `GITHUB_` — GitHub reserves that prefix. |
 
-### GitHub repository variables (optional — all have safe defaults)
+### GitHub repository variables
 
 `Repo → Settings → Secrets and variables → Actions → Variables`
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `AWS_ROLE_ARN` | — (required) | `arn:aws:iam::673698305621:role/zord-infrastructure-aws-role` |
+| `TF_STATE_BUCKET` | — (required) | `zord-infrastructure-aws-tf-state` |
+| `TF_LOCK_TABLE` | — (required) | `zord-infrastructure-aws-tf-lock` (DynamoDB state lock) |
 | `ZORD_DOMAIN` | `zordnet.com` | Root domain. Drives SES, ACM lookup, CloudFront entrypoint (`api.<domain>`). |
 | `ENABLE_CLOUDFRONT_EDGE` | `true` | CloudFront + WAF master switch. Self-healing — safe to leave on. |
 | `KONG_ALB_STACK_TAG` | `zord-shared-alb` | ALB group tag the AWS LB Controller sets. Used to auto-discover the ALB. |
@@ -144,7 +154,7 @@ AWS Console → Secrets Manager → production/zord/argocd-credentials
 
 Contains `username` / `password` / `url`, all auto-generated. ArgoCD is at
 `https://argocd.zordnet.com`. The ArgoCD repo secret is created automatically
-from `GITHUB_PAT_ARGOCD` — no manual kubectl.
+from `ARGOCD_GITHUB_PAT` — no manual kubectl.
 
 ---
 
