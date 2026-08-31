@@ -80,8 +80,12 @@ data "aws_ssm_parameter" "amazon_linux_2023_ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
+# ACM lookup matches the certificate's PRIMARY domain name. Our cert's primary
+# domain is the apex (zordnet.com) with *.zordnet.com as a SAN, so we query the
+# apex — querying "*.zordnet.com" returns "empty result" because that is only a
+# subject-alternative-name, not the primary domain.
 data "aws_acm_certificate" "wildcard" {
-  domain      = "*.${var.ses_domain}"
+  domain      = var.ses_domain
   statuses    = ["ISSUED"]
   most_recent = true
 }
@@ -128,7 +132,7 @@ data "aws_acm_certificate" "wildcard_us_east_1" {
   count    = local.cloudfront_edge_active ? 1 : 0
   provider = aws.us_east_1
 
-  domain      = "*.${var.ses_domain}"
+  domain      = var.ses_domain
   statuses    = ["ISSUED"]
   most_recent = true
 }
