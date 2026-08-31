@@ -72,25 +72,12 @@ data "aws_acm_certificate" "wildcard" {
   most_recent = true
 }
 
-# CloudFront only accepts ACM certs from us-east-1. Looked up whenever the edge
-# is not hard-disabled; the module itself only uses it once an origin is found.
-data "aws_acm_certificate" "wildcard_us_east_1" {
-  count    = var.enable_cloudfront_edge ? 1 : 0
-  provider = aws.us_east_1
-
-  domain      = "*.${var.ses_domain}"
-  statuses    = ["ISSUED"]
-  most_recent = true
-}
-
 # Auto-discover the Kong ALB by the tag the AWS LB Controller applies.
 # IMPORTANT: aws_lbs (plural) returns a LIST and does NOT error when nothing
 # matches — unlike aws_lb (singular), which fails the whole apply if the ALB
 # is absent. This makes the edge self-healing:
 #   - ALB not created yet  -> empty list -> CloudFront skips itself this apply
 #   - ALB exists           -> found      -> CloudFront comes up automatically
-# So a single `terraform apply` is safe on a fresh cluster; re-running apply
-# after Kong is deployed brings the edge up with no manual toggle.
 data "aws_lbs" "kong" {
   count = var.enable_cloudfront_edge && var.kong_alb_domain_name == "" ? 1 : 0
 
@@ -114,6 +101,22 @@ locals {
     length(data.aws_lb.kong) == 1 ? data.aws_lb.kong[0].dns_name :
     ""
   )
+
+  # The edge only truly comes up when the ALB origin exists AND the edge is enabled.
+  cloudfront_edge_active = var.enable_cloudfront_edge && local.kong_alb_dns != ""
+}
+
+# CloudFront only accepts ACM certs from us-east-1. Only looked up when the edge
+# is ACTUALLY coming up (ALB origin found) — so a plan on a fresh account with
+# no us-east-1 cert yet does NOT fail. The cert must exist by the time Kong's ALB
+# exists (see manual.md).
+data "aws_acm_certificate" "wildcard_us_east_1" {
+  count    = local.cloudfront_edge_active ? 1 : 0
+  provider = aws.us_east_1
+
+  domain      = "*.${var.ses_domain}"
+  statuses    = ["ISSUED"]
+  most_recent = true
 }
 
 data "aws_eks_cluster_auth" "this" {
@@ -432,5 +435,5 @@ module "cloudfront_waf" {
   subdomain           = var.cloudfront_subdomain
   origin_domain_name  = local.kong_alb_dns
   waf_rate_limit      = var.waf_rate_limit
-  acm_certificate_arn = var.enable_cloudfront_edge ? data.aws_acm_certificate.wildcard_us_east_1[0].arn : ""
+  acm_certificate_arn = local.cloudfront_edge_active ? data.aws_acm_certificate.wildcard_us_east_1[0].arn : ""
 }
