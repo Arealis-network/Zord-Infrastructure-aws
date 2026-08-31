@@ -1,0 +1,226 @@
+############################
+# EC2 IAM ACCESS
+############################
+
+resource "aws_iam_role" "ec2_admin_role" {
+  name = "${var.eks_resource_prefix}-ec2-admin-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    Name = "${var.eks_name_prefix} ec2 admin role"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ec2_eks_access" {
+  role       = aws_iam_role.ec2_admin_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "ec2_ecr_access" {
+  role       = aws_iam_role.ec2_admin_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "ec2_s3_access" {
+  role       = aws_iam_role.ec2_admin_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+}
+
+resource "aws_iam_role_policy" "ec2_eks_describe" {
+  name = "${var.eks_resource_prefix}-ec2-eks-describe"
+  role = aws_iam_role.ec2_admin_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "eks:DescribeCluster",
+          "eks:ListClusters",
+          "eks:AccessKubernetesApi"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sts:GetCallerIdentity"]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "ec2_admin_profile" {
+  name = "${var.eks_resource_prefix}-ec2-admin-profile"
+  role = aws_iam_role.ec2_admin_role.name
+
+  tags = {
+    Name = "${var.eks_name_prefix} ec2 admin profile"
+  }
+}
+
+############################
+# EKS ACCESS FOR EC2 ROLE
+############################
+
+resource "aws_eks_access_entry" "ec2_admin_role" {
+  cluster_name  = var.cluster_name
+  principal_arn = aws_iam_role.ec2_admin_role.arn
+  type          = "STANDARD"
+
+  tags = {
+    Name = "${var.eks_name_prefix} ec2 admin access entry"
+  }
+}
+
+resource "aws_eks_access_policy_association" "ec2_admin_role" {
+  cluster_name  = var.cluster_name
+  principal_arn = aws_iam_role.ec2_admin_role.arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [
+    aws_eks_access_entry.ec2_admin_role
+  ]
+}
+
+############################
+# EC2 INSTANCE
+############################
+
+resource "aws_instance" "eks" {
+  ami                    = var.ami_id
+  instance_type          = "t3.large"
+  subnet_id              = var.public_subnet_id
+  iam_instance_profile   = aws_iam_instance_profile.ec2_admin_profile.name
+  vpc_security_group_ids = [var.security_group_id]
+
+  root_block_device {
+    volume_size = "60"
+  }
+
+  tags = {
+    Name = "${var.eks_name_prefix} admin instance"
+  }
+
+  user_data = file("${path.module}/tool.sh")
+
+  lifecycle {
+    ignore_changes = [user_data, ami]
+  }
+}
+
+############################
+# EC2 ELASTIC IP (static)
+############################
+
+resource "aws_eip" "admin" {
+  domain = "vpc"
+
+  tags = {
+    Name = "${var.eks_name_prefix} admin eip"
+  }
+}
+
+resource "aws_eip_association" "admin" {
+  instance_id   = aws_instance.eks.id
+  allocation_id = aws_eip.admin.id
+}
+
+############################
+# EC2 AUTO-STOP SCHEDULE
+############################
+
+resource "aws_scheduler_schedule" "ec2_stop" {
+  name       = "${var.eks_resource_prefix}-ec2-stop-night"
+  group_name = "default"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  # Stop at 10 PM IST (4:30 PM UTC) every day
+  schedule_expression          = "cron(30 16 * * ? *)"
+  schedule_expression_timezone = "Asia/Kolkata"
+
+  target {
+    arn      = "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
+    role_arn = aws_iam_role.scheduler_role.arn
+
+    input = jsonencode({
+      InstanceIds = [aws_instance.eks.id]
+    })
+  }
+}
+
+resource "aws_scheduler_schedule" "ec2_start" {
+  name       = "${var.eks_resource_prefix}-ec2-start-morning"
+  group_name = "default"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  # Start at 9 AM IST (3:30 AM UTC) every weekday (Mon-Fri)
+  schedule_expression          = "cron(30 3 ? * MON-FRI *)"
+  schedule_expression_timezone = "Asia/Kolkata"
+
+  target {
+    arn      = "arn:aws:scheduler:::aws-sdk:ec2:startInstances"
+    role_arn = aws_iam_role.scheduler_role.arn
+
+    input = jsonencode({
+      InstanceIds = [aws_instance.eks.id]
+    })
+  }
+}
+
+resource "aws_iam_role" "scheduler_role" {
+  name = "${var.eks_resource_prefix}-scheduler-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "scheduler.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    Name = "${var.eks_name_prefix} scheduler role"
+  }
+}
+
+resource "aws_iam_role_policy" "scheduler_ec2" {
+  name = "${var.eks_resource_prefix}-scheduler-ec2-policy"
+  role = aws_iam_role.scheduler_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ec2:StartInstances",
+        "ec2:StopInstances"
+      ]
+      Resource = aws_instance.eks.arn
+    }]
+  })
+}
