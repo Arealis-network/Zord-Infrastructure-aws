@@ -100,13 +100,14 @@ jobs:
             -backend-config="key=eks/production/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
             -backend-config="encrypt=true" \
-            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}"
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            2>&1
 
       - name: Terraform Validate
         run: terraform validate
 
       - name: Terraform Plan (production)
-        run: terraform plan -var="environment=production" -no-color
+        run: terraform plan -var="environment=production" -no-color 2>&1
 
   # ════════════════════════════════════════════════════════════════
   # Manual — Plan / Apply / Destroy (deploys everything at once)
@@ -163,7 +164,8 @@ jobs:
             -backend-config="key=${{ env.STATE_KEY }}" \
             -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
             -backend-config="encrypt=true" \
-            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}"
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            2>&1
 
       - name: Terraform Validate
         run: terraform validate
