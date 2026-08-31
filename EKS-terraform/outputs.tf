@@ -230,7 +230,4 @@ output "cloudfront_origin_verify_secret" {
   sensitive   = true
 }
 
-output "cloudfront_waf_log_group" {
-  description = "CloudWatch log group with WAF request logs (audit trail)."
-  value       = module.cloudfront_waf.waf_log_group
-}
+

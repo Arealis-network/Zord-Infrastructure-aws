@@ -278,7 +278,7 @@ Self-contained module `aws-cloudfront-waf`, fully automatic:
 | WAF — SQL injection | SQLi rule set |
 | WAF — Bot Control | Scrapers, credential stuffing (toggle `enable_bot_control`) |
 | WAF — IP rate limiting | 2000 req / 5 min per IP (DDoS) |
-| WAF logging | CloudWatch (auth/cookie redacted) |
+| WAF metrics | CloudWatch metrics only (near-zero cost) → view in Grafana via CloudWatch data source. No CloudWatch Logs (dropped to avoid log-ingestion cost). |
 | Origin cloaking | `X-Origin-Verify` header; Kong 403s requests without it |
 | Security headers | HSTS (2yr, preload), X-Frame-Options DENY, no-sniff, XSS |
 | TLS | 1.2+ viewer→CloudFront and CloudFront→ALB |

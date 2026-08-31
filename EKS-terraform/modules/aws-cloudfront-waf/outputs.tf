@@ -28,11 +28,6 @@ output "waf_web_acl_arn" {
   value       = local.enabled ? aws_wafv2_web_acl.edge[0].arn : ""
 }
 
-output "waf_log_group" {
-  description = "CloudWatch log group holding WAF request logs."
-  value       = local.enabled ? aws_cloudwatch_log_group.waf[0].name : ""
-}
-
 output "origin_verify_header_name" {
   description = "Header name CloudFront injects on every origin request (X-Origin-Verify). Kong requires it. Secret JSON keys: CLOUDFRONT_ORIGIN_VERIFY_HEADER / CLOUDFRONT_ORIGIN_VERIFY_SECRET (Kong reads CLOUDFRONT_ORIGIN_VERIFY_SECRET)."
   value       = local.enabled ? "X-Origin-Verify" : ""

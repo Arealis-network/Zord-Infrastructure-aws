@@ -242,42 +242,18 @@ resource "aws_wafv2_web_acl" "edge" {
 }
 
 # ─────────────────────────────────────────
-# WAF logging → CloudWatch (audit trail of blocked/allowed requests)
-# Log group name MUST start with "aws-waf-logs-". Lives in us-east-1 (CLOUDFRONT scope).
+# WAF observability — metrics only (no CloudWatch Logs, to avoid log ingestion cost).
+#
+# WAF cannot push to Prometheus (it is a managed edge service with no scrape
+# endpoint). But every rule's visibility_config emits CloudWatch METRICS
+# (blocked/allowed/matched counts) — these are near-zero cost, unlike CloudWatch
+# LOGS. View them in Grafana via the CloudWatch data source.
+#
+# The per-request CloudWatch Logs group was intentionally removed to eliminate
+# log-ingestion cost. If request-level WAF forensics are ever required (e.g. for
+# a compliance audit), re-add an aws_wafv2_web_acl_logging_configuration pointing
+# at CloudWatch Logs, S3, or Kinesis Firehose (WAF's only supported destinations).
 # ─────────────────────────────────────────
-
-resource "aws_cloudwatch_log_group" "waf" {
-  count    = local.enabled ? 1 : 0
-  provider = aws.us_east_1
-
-  name              = "aws-waf-logs-${local.name_prefix}-edge"
-  retention_in_days = var.waf_log_retention_days
-
-  tags = {
-    Name    = "aws-waf-logs-${local.name_prefix}-edge"
-    Service = "cloudfront-waf"
-  }
-}
-
-resource "aws_wafv2_web_acl_logging_configuration" "edge" {
-  count    = local.enabled ? 1 : 0
-  provider = aws.us_east_1
-
-  resource_arn            = aws_wafv2_web_acl.edge[0].arn
-  log_destination_configs = [aws_cloudwatch_log_group.waf[0].arn]
-
-  # Redact sensitive fields from logs (defense-in-depth for PII/secrets).
-  redacted_fields {
-    single_header {
-      name = "authorization"
-    }
-  }
-  redacted_fields {
-    single_header {
-      name = "cookie"
-    }
-  }
-}
 
 # ─────────────────────────────────────────
 # Security response headers policy (HSTS, anti-clickjacking, etc.)

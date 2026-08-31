@@ -36,9 +36,3 @@ variable "enable_bot_control" {
   type        = bool
   default     = true
 }
-
-variable "waf_log_retention_days" {
-  description = "CloudWatch log retention (days) for WAF logs."
-  type        = number
-  default     = 90
-}
