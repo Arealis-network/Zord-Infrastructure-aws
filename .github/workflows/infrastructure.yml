@@ -48,6 +48,15 @@ env:
   TF_INPUT: "false"
   TF_WORKING_DIR: "EKS-terraform"
   AWS_REGION_VALUE: "ap-south-1"
+  # Domain name comes from a GitHub repo variable (Settings → Secrets and variables →
+  # Actions → Variables → ZORD_DOMAIN). Falls back to zordnet.com if not set.
+  TF_VAR_ses_domain: ${{ vars.ZORD_DOMAIN || 'zordnet.com' }}
+  # CloudFront/WAF edge layer. Defaults to true and is self-healing: if Kong's ALB
+  # does not exist yet, the edge skips itself this apply and comes up automatically
+  # on a later apply once Kong is deployed. Set to 'false' to hard-disable it.
+  TF_VAR_enable_cloudfront_edge: ${{ vars.ENABLE_CLOUDFRONT_EDGE || 'true' }}
+  # Tag the AWS LB Controller puts on the shared ALB fronting Kong (auto-discovery).
+  TF_VAR_kong_alb_stack_tag: ${{ vars.KONG_ALB_STACK_TAG || 'zord-shared-alb' }}
 
 jobs:
   # ════════════════════════════════════════════════════════════════
@@ -226,8 +235,29 @@ jobs:
           # EKS Addons
           ADDONS=$(aws eks list-addons --cluster-name "${CLUSTER_NAME}" --region "${REGION}" --query 'addons' --output text 2>/dev/null || echo "N/A")
 
+          # KMS keys (customer-managed, enabled)
+          KMS_COUNT=$(aws kms list-keys --region "${REGION}" --query 'Keys[*].KeyId' --output text 2>/dev/null | wc -w || echo "0")
+
+          # CloudFront + WAF edge layer (global — WAF is us-east-1 CLOUDFRONT scope)
+          CF_ENABLED=$(terraform output -raw cloudfront_enabled 2>/dev/null || echo "false")
+          CF_DOMAIN=$(terraform output -raw cloudfront_domain_name 2>/dev/null || echo "")
+          CF_FQDN=$(terraform output -raw cloudfront_public_fqdn 2>/dev/null || echo "N/A")
+          CF_DIST_COUNT=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Comment,'arealis-zord')].Id" --output text 2>/dev/null | wc -w || echo "0")
+          WAF_ACL_COUNT=$(aws wafv2 list-web-acls --scope CLOUDFRONT --region us-east-1 --query "WebACLs[?contains(Name,'arealis-zord')].Id" --output text 2>/dev/null | wc -w || echo "0")
+          if [ "${CF_ENABLED}" = "true" ]; then
+            CF_STATUS="✅ Active — https://${CF_FQDN} → ${CF_DOMAIN}"
+          else
+            CF_STATUS="⏸️ Skipped (Kong ALB not found yet — auto-enables on next apply)"
+          fi
+
+          # Load balancers (ALBs/NLBs created by AWS LB Controller in-cluster)
+          LB_COUNT=$(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text 2>/dev/null | wc -w || echo "0")
+
           # Total resources in state
           TOTAL_RESOURCES=$(terraform state list 2>/dev/null | grep -c '.' || echo "0")
+
+          # Per-module resource count breakdown (from state)
+          MODULE_BREAKDOWN=$(terraform state list 2>/dev/null | sed -E 's/\[.*//; s/^(module\.[^.]+).*/\1/; s/^([^.]+\.[^.]+).*/\1/' | sort | uniq -c | sort -rn || echo "")
 
           # Cost estimation
           TODAY=$(date +%Y-%m-%d)
@@ -277,11 +307,28 @@ jobs:
             echo "| IAM Roles (arealis-zord) | ${IAM_ROLES} | Cluster, worker, EBS, autoscaler, ESO, SES, EC2, scheduler |"
             echo "| Secrets Manager | ${SECRET_COUNT} | ${SECRETS} |"
             echo "| SES Domain | verified | ${SES_DOMAIN} |"
+            echo "| KMS Keys | ${KMS_COUNT} | S3, token-enclave, evidence-archive |"
+            echo ""
+            echo "### 🛡️ Edge Layer (CloudFront + WAF)"
+            echo ""
+            echo "| Resource | Count | Details |"
+            echo "|---|---|---|"
+            echo "| CloudFront Distribution | ${CF_DIST_COUNT} | ${CF_STATUS} |"
+            echo "| WAF WebACL (CLOUDFRONT/us-east-1) | ${WAF_ACL_COUNT} | Common + KnownBadInputs + SQLi + BotControl + rate-limit |"
+            echo "| Load Balancers (in-cluster ALB/NLB) | ${LB_COUNT} | Created by AWS LB Controller |"
             echo ""
             echo "### 🔌 EKS Addons"
             echo ""
             echo "\`\`\`"
             echo "${ADDONS}"
+            echo "\`\`\`"
+            echo ""
+            echo "### 📦 Resource Count by Module (from Terraform state)"
+            echo ""
+            echo "Total resources created: **${TOTAL_RESOURCES}**"
+            echo ""
+            echo "\`\`\`"
+            echo "${MODULE_BREAKDOWN}"
             echo "\`\`\`"
             echo ""
             echo "### 💰 Cost"
@@ -305,6 +352,70 @@ jobs:
             echo "2. Deploy app: \`kubectl apply -k kubernetes/eks\`"
             echo "3. Deploy Kong: \`kubectl apply -k kubernetes/api-gateway\`"
             echo "4. Point DNS to ALB"
+            echo ""
+            echo "### 📋 Bastion Verification — Copy & Run on EC2 Admin"
+            echo ""
+            echo "SSH in first: \`ssh ec2-user@${EC2_IP}\`  (Jenkins ${EC2_IP}:7777 · SonarQube ${EC2_IP}:7771)"
+            echo ""
+            echo "#### 1) Connect to the cluster"
+            echo "\`\`\`bash"
+            echo "aws eks update-kubeconfig --region ${REGION} --name ${CLUSTER_NAME}"
+            echo "kubectl get nodes -o wide          # expect stateful + stateless nodes Ready"
+            echo "kubectl get pods -A                # everything Running/Completed"
+            echo "helm list -A                       # autoscaler, external-secrets, argo-rollouts, argocd"
+            echo "\`\`\`"
+            echo ""
+            echo "#### 2) Verify controllers & addons"
+            echo "\`\`\`bash"
+            echo "kubectl get pods -n kube-system | grep -E 'autoscaler|aws-node|coredns|ebs-csi'"
+            echo "kubectl get pods -n external-secrets"
+            echo "kubectl get clustersecretstore,secretstore -A"
+            echo "kubectl get pods -n argocd"
+            echo "kubectl get pods -n argo-rollouts"
+            echo "kubectl get daemonset aws-node -n kube-system -o jsonpath='{.spec.template.spec.containers[0].env}' | grep NETWORK_POLICY   # NetworkPolicy enforcing"
+            echo "aws eks list-addons --cluster-name ${CLUSTER_NAME} --region ${REGION}"
+            echo "\`\`\`"
+            echo ""
+            echo "#### 3) Verify AWS resources (counts should match the tables above)"
+            echo "\`\`\`bash"
+            echo "# EKS + nodes"
+            echo "aws eks describe-cluster --name ${CLUSTER_NAME} --region ${REGION} --query 'cluster.status'"
+            echo "# VPC + network"
+            echo "aws ec2 describe-vpcs --vpc-ids ${VPC_ID} --region ${REGION} --query 'Vpcs[0].State'"
+            echo "aws ec2 describe-nat-gateways --region ${REGION} --filter Name=state,Values=available --query 'length(NatGateways)'"
+            echo "aws ec2 describe-subnets --region ${REGION} --filters Name=vpc-id,Values=${VPC_ID} --query 'length(Subnets)'"
+            echo "# S3 (expect 6 zord-* buckets)"
+            echo "aws s3api list-buckets --query \"Buckets[?starts_with(Name,'zord-')].Name\" --output text"
+            echo "# KMS (customer keys)"
+            echo "aws kms list-aliases --region ${REGION} --query \"Aliases[?contains(AliasName,'zord')].AliasName\" --output text"
+            echo "# Secrets Manager (per-service secrets)"
+            echo "aws secretsmanager list-secrets --region ${REGION} --filters Key=name,Values=${ENV}/zord --query 'SecretList[*].Name' --output text"
+            echo "# IAM roles"
+            echo "aws iam list-roles --query \"Roles[?starts_with(RoleName,'arealis-zord')].RoleName\" --output text"
+            echo "\`\`\`"
+            echo ""
+            echo "#### 4) Verify CloudFront + WAF edge"
+            echo "\`\`\`bash"
+            echo "# CloudFront distribution (blank until Kong ALB exists; auto-enables next apply)"
+            echo "aws cloudfront list-distributions --query \"DistributionList.Items[?contains(Comment,'arealis-zord')].[Id,DomainName,Status]\" --output table"
+            echo "# WAF WebACL (CLOUDFRONT scope lives in us-east-1)"
+            echo "aws wafv2 list-web-acls --scope CLOUDFRONT --region us-east-1 --query \"WebACLs[?contains(Name,'arealis-zord')].[Name,Id]\" --output table"
+            echo "# Origin-cloaking secret exists (value hidden)"
+            echo "aws secretsmanager describe-secret --secret-id ${ENV}/zord/cloudfront-origin-verify --region ${REGION} --query 'Name'"
+            echo "# In-cluster ALB created by Kong (send this DNS back to infra)"
+            echo "kubectl get ingress -A"
+            echo "\`\`\`"
+            echo ""
+            echo "#### 5) Get ArgoCD admin password"
+            echo "\`\`\`bash"
+            echo "aws secretsmanager get-secret-value --secret-id ${ENV}/zord/argocd-credentials --region ${REGION} --query SecretString --output text | jq ."
+            echo "\`\`\`"
+            echo ""
+            echo "#### 6) Deploy the application (from app repo)"
+            echo "\`\`\`bash"
+            echo "kubectl apply -k kubernetes/eks"
+            echo "kubectl apply -k kubernetes/api-gateway"
+            echo "\`\`\`"
             echo ""
             echo "> ⚠️ **Destroy when done:** Run this workflow with action \`destroy\`, confirm_destroy = \`yes\`"
           } >> "$GITHUB_STEP_SUMMARY"

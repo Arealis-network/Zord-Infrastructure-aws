@@ -76,22 +76,6 @@ variable "evidence_signing_key_secret_name" {
 }
 
 ############################
-# S3 access settings
-############################
-
-variable "s3_workload_namespace" {
-  description = "Kubernetes namespace where S3 workloads run."
-  type        = string
-  default     = "zord"
-}
-
-variable "s3_workload_service_account" {
-  description = "Kubernetes service account for pods that need S3 + KMS access."
-  type        = string
-  default     = "zord-aws-access"
-}
-
-############################
 # SES email settings
 ############################
 
@@ -111,4 +95,49 @@ variable "ses_workload_service_account" {
   description = "Kubernetes service account used by the workload that sends emails."
   type        = string
   default     = "zord-app"
+}
+
+############################
+# ArgoCD settings
+############################
+
+variable "github_pat" {
+  description = "GitHub Personal Access Token for ArgoCD repo access. Pass via TF_VAR_github_pat or -var."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+############################
+# CloudFront + WAF (edge layer)
+############################
+
+variable "cloudfront_subdomain" {
+  description = "Subdomain fronted by CloudFront (e.g. api => api.zordnet.com)."
+  type        = string
+  default     = "api"
+}
+
+variable "kong_alb_domain_name" {
+  description = "Manual override for the shared ALB DNS name that fronts Kong. Normally leave EMPTY — Terraform auto-discovers the ALB by tag (see kong_alb_stack_tag). Only set this if auto-discovery does not fit your setup."
+  type        = string
+  default     = ""
+}
+
+variable "kong_alb_stack_tag" {
+  description = "Value of the 'ingress.k8s.aws/stack' tag the AWS LB Controller puts on the shared ALB fronting Kong. Terraform uses this to auto-discover the ALB DNS name — no manual copy needed. For a shared ALB group this is the group name (e.g. 'zord-shared-alb'); for a standalone ingress it is '<namespace>/<ingress-name>' (e.g. 'api-gateway/kong-public')."
+  type        = string
+  default     = "zord-shared-alb"
+}
+
+variable "enable_cloudfront_edge" {
+  description = "Master switch for the CloudFront/WAF edge layer. When true (default), Terraform auto-discovers the Kong ALB and brings up CloudFront + WAF. Safe to leave on: if the ALB does not exist yet, the edge self-skips this apply and comes up automatically on a later apply once Kong is deployed. Set false to hard-disable the edge entirely."
+  type        = bool
+  default     = true
+}
+
+variable "waf_rate_limit" {
+  description = "Max requests per IP in a 5-minute window before WAF blocks (DDoS mitigation)."
+  type        = number
+  default     = 2000
 }

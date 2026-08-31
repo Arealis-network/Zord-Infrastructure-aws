@@ -194,3 +194,43 @@ output "evidence_kms_key_arn" {
   description = "KMS key ARN for evidence archive encryption (NEW-P1-06)."
   value       = module.kms_evidence_archive.kms_key_arn
 }
+
+############################
+# cloudfront + waf output (edge layer)
+############################
+
+output "cloudfront_enabled" {
+  description = "Whether the CloudFront/WAF edge layer is active."
+  value       = module.cloudfront_waf.enabled
+}
+
+output "cloudfront_domain_name" {
+  description = "CloudFront distribution domain name. Point api.<domain> DNS CNAME at this."
+  value       = module.cloudfront_waf.cloudfront_domain_name
+}
+
+output "cloudfront_public_fqdn" {
+  description = "Public entrypoint FQDN served by CloudFront (e.g. api.zordnet.com)."
+  value       = module.cloudfront_waf.public_fqdn
+}
+
+output "cloudfront_waf_web_acl_arn" {
+  description = "ARN of the WAF WebACL attached to CloudFront."
+  value       = module.cloudfront_waf.waf_web_acl_arn
+}
+
+output "cloudfront_origin_verify_header" {
+  description = "Header name CloudFront injects for origin cloaking (Kong/ALB must require it)."
+  value       = module.cloudfront_waf.origin_verify_header_name
+}
+
+output "cloudfront_origin_verify_secret" {
+  description = "Secret value for the origin-verify header. Give to app team. Sensitive — read via: terraform output -raw cloudfront_origin_verify_secret"
+  value       = module.cloudfront_waf.origin_verify_secret
+  sensitive   = true
+}
+
+output "cloudfront_waf_log_group" {
+  description = "CloudWatch log group with WAF request logs (audit trail)."
+  value       = module.cloudfront_waf.waf_log_group
+}

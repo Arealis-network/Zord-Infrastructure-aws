@@ -18,11 +18,25 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
 provider "aws" {
   region = var.aws_region
+
+  default_tags {
+    tags = local.common_tags
+  }
+}
+
+# CloudFront + its WAF are global and require us-east-1 for the WebACL and ACM cert.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
 
   default_tags {
     tags = local.common_tags
@@ -58,6 +72,50 @@ data "aws_acm_certificate" "wildcard" {
   most_recent = true
 }
 
+# CloudFront only accepts ACM certs from us-east-1. Looked up whenever the edge
+# is not hard-disabled; the module itself only uses it once an origin is found.
+data "aws_acm_certificate" "wildcard_us_east_1" {
+  count    = var.enable_cloudfront_edge ? 1 : 0
+  provider = aws.us_east_1
+
+  domain      = "*.${var.ses_domain}"
+  statuses    = ["ISSUED"]
+  most_recent = true
+}
+
+# Auto-discover the Kong ALB by the tag the AWS LB Controller applies.
+# IMPORTANT: aws_lbs (plural) returns a LIST and does NOT error when nothing
+# matches — unlike aws_lb (singular), which fails the whole apply if the ALB
+# is absent. This makes the edge self-healing:
+#   - ALB not created yet  -> empty list -> CloudFront skips itself this apply
+#   - ALB exists           -> found      -> CloudFront comes up automatically
+# So a single `terraform apply` is safe on a fresh cluster; re-running apply
+# after Kong is deployed brings the edge up with no manual toggle.
+data "aws_lbs" "kong" {
+  count = var.enable_cloudfront_edge && var.kong_alb_domain_name == "" ? 1 : 0
+
+  tags = {
+    "ingress.k8s.aws/stack" = var.kong_alb_stack_tag
+  }
+}
+
+# Resolve the single matching ALB's DNS name (only when exactly one is found).
+data "aws_lb" "kong" {
+  count = var.enable_cloudfront_edge && var.kong_alb_domain_name == "" && length(try(data.aws_lbs.kong[0].arns, [])) == 1 ? 1 : 0
+
+  arn = tolist(data.aws_lbs.kong[0].arns)[0]
+}
+
+locals {
+  # Manual override wins; else use the auto-discovered ALB if exactly one exists;
+  # else empty (CloudFront stays off this apply).
+  kong_alb_dns = (
+    var.kong_alb_domain_name != "" ? var.kong_alb_domain_name :
+    length(data.aws_lb.kong) == 1 ? data.aws_lb.kong[0].dns_name :
+    ""
+  )
+}
+
 data "aws_eks_cluster_auth" "this" {
   name = local.cluster_name
 
@@ -91,11 +149,9 @@ locals {
   private1_cidr = var.environment == "production" ? "10.0.3.0/24" : "10.1.3.0/24"
   private2_cidr = var.environment == "production" ? "10.0.4.0/24" : "10.1.4.0/24"
 
-  # Secret ARNs for External Secrets Operator
+  # Secret ARNs for External Secrets Operator (all per-service secrets)
   external_secret_arns = [
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.app_secret_name}*",
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.edge_signing_key_secret_name}*",
-    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${var.evidence_signing_key_secret_name}*"
+    "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/zord/*"
   ]
 }
 
@@ -327,4 +383,54 @@ module "external_secrets" {
   service_account     = var.external_secrets_service_account
   secret_arns         = local.external_secret_arns
   node_groups_ready   = module.node_groups.stateless_node_group_id
+}
+
+############################
+# ARGO ROLLOUTS MODULE
+############################
+
+module "argo_rollouts" {
+  source = "./modules/helm-argo-rollouts"
+
+  node_groups_ready = module.node_groups.stateless_node_group_id
+}
+
+############################
+# ARGOCD MODULE
+############################
+
+module "argocd" {
+  source = "./modules/helm-argocd"
+
+  environment         = var.environment
+  domain              = var.ses_domain
+  acm_certificate_arn = data.aws_acm_certificate.wildcard.arn
+  node_groups_ready   = module.node_groups.stateless_node_group_id
+  github_pat          = var.github_pat
+}
+
+############################
+# CLOUDFRONT + WAF MODULE (MNC edge layer)
+############################
+# Internet -> CloudFront (WAF/DDoS/cache) -> shared ALB -> Kong -> microservices.
+# FULLY AUTOMATIC & SELF-HEALING: Terraform auto-discovers the Kong ALB by tag
+# (no manual hostname) and writes the origin-verify secret to Secrets Manager
+# (Kong reads it via ESO). If the ALB does not exist yet, the discovery returns
+# empty and CloudFront simply skips itself this apply — no failure. Re-running
+# apply after Kong is deployed brings the edge up automatically. No manual toggle.
+
+module "cloudfront_waf" {
+  source = "./modules/aws-cloudfront-waf"
+
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  environment         = var.environment
+  domain              = var.ses_domain
+  subdomain           = var.cloudfront_subdomain
+  origin_domain_name  = local.kong_alb_dns
+  waf_rate_limit      = var.waf_rate_limit
+  acm_certificate_arn = var.enable_cloudfront_edge ? data.aws_acm_certificate.wildcard_us_east_1[0].arn : ""
 }
