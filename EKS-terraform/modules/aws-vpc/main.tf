@@ -147,7 +147,7 @@ resource "aws_route_table_association" "priv2" {
 
 resource "aws_security_group" "allow_all" {
   name        = "${var.vpc_resource_prefix}-admin-sg"
-  description = "Admin EC2 security group — restricted ports"
+  description = "Admin EC2 security group - restricted ports"
   vpc_id      = aws_vpc.eks_vpc.id
 
   ingress {

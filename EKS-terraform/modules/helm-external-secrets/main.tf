@@ -98,6 +98,14 @@ resource "helm_release" "external_secrets" {
 # applies YAML at APPLY time only and never touches the cluster during plan, so a
 # single `terraform apply` can create the cluster AND this ClusterSecretStore.
 resource "kubectl_manifest" "cluster_secret_store" {
+  # validate_schema=false: do NOT pre-validate the CRD kind against the cluster.
+  # The ESO CRDs are registered by the Helm release above, but may not be fully
+  # established the instant this applies — validation would fail with
+  # "isn't valid for cluster". Server-side apply + no schema validation makes the
+  # apply resilient and retryable.
+  validate_schema   = false
+  server_side_apply = true
+
   yaml_body = yamlencode({
     apiVersion = "external-secrets.io/v1beta1"
     kind       = "ClusterSecretStore"
