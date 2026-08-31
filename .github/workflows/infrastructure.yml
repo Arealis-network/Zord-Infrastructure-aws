@@ -106,7 +106,17 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan (production)
-        run: terraform plan -var="environment=production" -no-color -input=false -lock=false
+        run: |
+          set +e
+          terraform plan -var="environment=production" -no-color -input=false -lock=false -detailed-exitcode
+          code=$?
+          echo "terraform plan exit code: $code"
+          # 0 = no changes, 2 = changes present. Both are success for a PR plan.
+          # Only 1 is a real error.
+          if [ "$code" -eq 1 ]; then
+            exit 1
+          fi
+          exit 0
 
   # ════════════════════════════════════════════════════════════════
   # Manual — Plan / Apply / Destroy (deploys everything at once)
