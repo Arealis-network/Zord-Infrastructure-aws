@@ -439,6 +439,7 @@ module "argocd" {
   acm_certificate_arn = data.aws_acm_certificate.wildcard.arn
   node_groups_ready   = module.node_groups.stateless_node_group_id
   github_pat          = var.github_pat
+  shared_alb_group    = var.kong_alb_stack_tag
 }
 
 ############################

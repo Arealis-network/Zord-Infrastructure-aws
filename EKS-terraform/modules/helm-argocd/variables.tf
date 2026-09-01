@@ -19,6 +19,18 @@ variable "acm_certificate_arn" {
   type        = string
 }
 
+variable "shared_alb_group" {
+  description = "AWS LB Controller ingress group.name for the single shared ALB. ArgoCD and Kong join the same group so ALL hosts share ONE load balancer."
+  type        = string
+  default     = "zord-shared-alb"
+}
+
+variable "chart_version" {
+  description = "Pinned argo-cd Helm chart version (free/open-source). Latest stable: 10.4.1."
+  type        = string
+  default     = "10.4.1"
+}
+
 variable "github_username" {
   description = "GitHub username for ArgoCD repo access."
   type        = string

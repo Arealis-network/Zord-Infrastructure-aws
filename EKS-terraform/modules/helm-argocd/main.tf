@@ -52,6 +52,7 @@ resource "helm_release" "argocd" {
   name             = "argocd"
   repository       = "https://argoproj.github.io/argo-helm"
   chart            = "argo-cd"
+  version          = var.chart_version
   namespace        = "argocd"
   create_namespace = true
 
@@ -64,6 +65,7 @@ resource "helm_release" "argocd" {
         enabled = true
         annotations = {
           "kubernetes.io/ingress.class"                    = "alb"
+          "alb.ingress.kubernetes.io/group.name"           = var.shared_alb_group
           "alb.ingress.kubernetes.io/scheme"               = "internet-facing"
           "alb.ingress.kubernetes.io/target-type"          = "ip"
           "alb.ingress.kubernetes.io/certificate-arn"      = var.acm_certificate_arn
