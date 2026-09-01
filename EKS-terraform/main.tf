@@ -401,6 +401,24 @@ module "cluster_autoscaler" {
 }
 
 ############################
+# AWS LOAD BALANCER CONTROLLER MODULE
+############################
+# Turns Ingress/Service objects into the single shared ALB (zord-shared-alb)
+# that fronts Kong + ArgoCD. Uses Pod Identity for IAM.
+
+module "aws_lb_controller" {
+  source = "./modules/helm-aws-lb-controller"
+
+  cluster_name             = module.eks.cluster_name
+  aws_region               = var.aws_region
+  vpc_id                   = module.vpc.vpc_id
+  eks_name_prefix          = local.eks_name_prefix
+  eks_resource_prefix      = local.eks_resource_prefix
+  node_groups_ready        = module.node_groups.stateless_node_group_id
+  pod_identity_addon_ready = module.addons.pod_identity_addon_id
+}
+
+############################
 # EXTERNAL SECRETS MODULE
 ############################
 
@@ -439,7 +457,7 @@ module "argocd" {
   acm_certificate_arn = data.aws_acm_certificate.wildcard.arn
   node_groups_ready   = module.node_groups.stateless_node_group_id
   github_pat          = var.github_pat
-  shared_alb_group    = var.kong_alb_stack_tag
+  shared_alb_group    = var.argocd_alb_group
 }
 
 ############################

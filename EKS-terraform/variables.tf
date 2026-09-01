@@ -130,6 +130,12 @@ variable "kong_alb_stack_tag" {
   default     = "zord-shared-alb"
 }
 
+variable "argocd_alb_group" {
+  description = "ALB ingress group.name for the ArgoCD UI. Aligned with the app team's convention (zord-observability groups the ops/dashboard hosts). Kong/API hosts use zord-shared-alb."
+  type        = string
+  default     = "zord-observability"
+}
+
 variable "enable_cloudfront_edge" {
   description = "Master switch for the CloudFront/WAF edge layer. When true (default), Terraform auto-discovers the Kong ALB and brings up CloudFront + WAF. Safe to leave on: if the ALB does not exist yet, the edge self-skips this apply and comes up automatically on a later apply once Kong is deployed. Set false to hard-disable the edge entirely."
   type        = bool
