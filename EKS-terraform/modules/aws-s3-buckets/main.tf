@@ -16,19 +16,14 @@ locals {
 }
 
 # ─────────────────────────────────────────
-# NOTE: pre-existing buckets are adopted via a configuration-driven `import`
-# block in the ROOT module (import blocks are only allowed in root), gated by
-# var.adopt_existing_buckets. See EKS-terraform/main.tf.
-# ─────────────────────────────────────────
-
-# ─────────────────────────────────────────
 # S3 Buckets
 # ─────────────────────────────────────────
 
 resource "aws_s3_bucket" "this" {
   for_each = local.buckets
 
-  bucket = each.value
+  bucket        = each.value
+  force_destroy = var.force_destroy_buckets
 
   tags = {
     Name        = each.value

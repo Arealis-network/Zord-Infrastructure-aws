@@ -56,9 +56,7 @@ env:
   TF_VAR_enable_cloudfront_edge: ${{ vars.ENABLE_CLOUDFRONT_EDGE || 'true' }}
   # Tag the AWS LB Controller puts on the shared ALB fronting Kong (auto-discovery).
   TF_VAR_kong_alb_stack_tag: ${{ vars.KONG_ALB_STACK_TAG || 'zord-shared-alb' }}
-  # Adopt (import) pre-existing S3 buckets instead of failing with
-  # BucketAlreadyOwnedByYou. Set true while the 6 zord-* buckets already exist.
-  TF_VAR_adopt_existing_buckets: ${{ vars.ADOPT_EXISTING_BUCKETS || 'true' }}
+  TF_VAR_force_destroy_buckets: ${{ vars.FORCE_DESTROY_BUCKETS || 'true' }}
 
 jobs:
   # ════════════════════════════════════════════════════════════════
@@ -180,6 +178,24 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
+
+      - name: Adopt existing S3 buckets (import if in AWS, else Terraform creates)
+        if: github.event.inputs.action == 'apply'
+        run: |
+          set +e
+          adopt() {
+            key="$1"; name="$2"; addr="module.s3_buckets.aws_s3_bucket.this[\"$key\"]"
+            terraform state show "$addr" >/dev/null 2>&1 && { echo "in state: $name"; return; }
+            aws s3api head-bucket --bucket "$name" >/dev/null 2>&1 || { echo "not in AWS, will create: $name"; return; }
+            terraform import -no-color "$addr" "$name" && echo "adopted: $name" || echo "import retry-safe skip: $name"
+          }
+          adopt edge_ingress               zord-edge-ingress
+          adopt intent_canonical           zord-intent-engine-canonical
+          adopt intent_nir                 zord-intent-engine-nir
+          adopt intent_governance          zord-intent-engine-governance
+          adopt outcome_settlement_ingress zord-outcome-engine-settlement-ingress
+          adopt evidence_vault             zord-evidence-vault
+          exit 0
 
       # ── PLAN ──
       - name: Terraform Plan

@@ -8,6 +8,12 @@ variable "kms_key_arn" {
   type        = string
 }
 
+variable "force_destroy_buckets" {
+  description = "When true, `terraform destroy` empties buckets (deletes all uploaded/versioned objects) before deleting them. Set false for production to protect data from accidental deletion."
+  type        = bool
+  default     = true
+}
+
 
 
 variable "edge_bucket_name" {

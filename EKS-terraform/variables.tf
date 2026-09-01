@@ -168,8 +168,8 @@ variable "rds_multi_az" {
 # S3 bucket adoption
 ############################
 
-variable "adopt_existing_buckets" {
-  description = "Set true to import pre-existing S3 buckets into state (adopt them) instead of failing with BucketAlreadyOwnedByYou. Use true when the 6 zord-* buckets already exist in AWS; false for a greenfield account. Drive via GitHub variable ADOPT_EXISTING_BUCKETS."
+variable "force_destroy_buckets" {
+  description = "When true, destroy empties buckets (deletes all uploaded objects) before deleting them. Set false for production to protect data. Drive via GitHub variable FORCE_DESTROY_BUCKETS."
   type        = bool
-  default     = false
+  default     = true
 }
