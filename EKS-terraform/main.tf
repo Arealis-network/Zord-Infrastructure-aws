@@ -253,6 +253,23 @@ module "ec2_admin" {
 }
 
 ############################
+# BASTION → EKS API ACCESS
+############################
+# The cluster API has a private endpoint; the bastion resolves it to a private IP.
+# Allow the bastion SG inbound on 443 to the EKS cluster SG so kubectl works from
+# the bastion. Without this, kubectl from the bastion times out.
+
+resource "aws_security_group_rule" "bastion_to_eks_api" {
+  type                     = "ingress"
+  description              = "Allow bastion to reach EKS API server (443)"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  security_group_id        = module.eks.cluster_security_group_id
+  source_security_group_id = module.vpc.security_group_id
+}
+
+############################
 # SES MODULE
 ############################
 
