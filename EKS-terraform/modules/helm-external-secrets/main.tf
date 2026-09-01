@@ -1,7 +1,8 @@
 # ═══════════════════════════════════════════════════════════════════
 # External Secrets Operator — Syncs AWS Secrets Manager → K8s Secrets
 # EKS Pod Identity grants SecretsManager access (no IMDS needed)
-# Self-contained: IAM Role + Pod Identity + Helm + ClusterSecretStore
+# Infra owns: IAM Role + Pod Identity + ESO Helm controller.
+# App team owns: the ClusterSecretStore CR (via ArgoCD) — see note below.
 # ═══════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────
@@ -88,39 +89,9 @@ resource "helm_release" "external_secrets" {
 }
 
 # ─────────────────────────────────────────
-# ClusterSecretStore — connects ESO to AWS Secrets Manager
-# Uses Pod Identity (no explicit auth — EKS injects creds automatically)
+# ClusterSecretStore — created by the APP TEAM (ArgoCD), not Terraform.
+# It's a Custom Resource of the ESO CRD installed above; Terraform can't reliably
+# create a CR right after its CRD (races the CRD becoming established). ArgoCD
+# handles CRD-then-CR ordering. App team adds ClusterSecretStore "aws-secrets-manager"
+# (provider aws, SecretsManager, region ap-south-1, Pod Identity auth).
 # ─────────────────────────────────────────
-
-# NOTE: uses kubectl_manifest (gavinbunney/kubectl), NOT kubernetes_manifest.
-# kubernetes_manifest contacts the cluster API during PLAN to fetch CRD schemas,
-# which fails when the EKS cluster does not exist yet (fresh apply). kubectl_manifest
-# applies YAML at APPLY time only and never touches the cluster during plan, so a
-# single `terraform apply` can create the cluster AND this ClusterSecretStore.
-resource "kubectl_manifest" "cluster_secret_store" {
-  # validate_schema=false: do NOT pre-validate the CRD kind against the cluster.
-  # The ESO CRDs are registered by the Helm release above, but may not be fully
-  # established the instant this applies — validation would fail with
-  # "isn't valid for cluster". Server-side apply + no schema validation makes the
-  # apply resilient and retryable.
-  validate_schema   = false
-  server_side_apply = true
-
-  yaml_body = yamlencode({
-    apiVersion = "external-secrets.io/v1beta1"
-    kind       = "ClusterSecretStore"
-    metadata = {
-      name = "aws-secrets-manager"
-    }
-    spec = {
-      provider = {
-        aws = {
-          service = "SecretsManager"
-          region  = var.aws_region
-        }
-      }
-    }
-  })
-
-  depends_on = [helm_release.external_secrets]
-}
