@@ -153,8 +153,8 @@ resource "aws_scheduler_schedule" "ec2_stop" {
     mode = "OFF"
   }
 
-  # Stop at 10 PM IST (4:30 PM UTC) every day
-  schedule_expression          = "cron(30 16 * * ? *)"
+  # Stop at 7:30 PM IST, Monday–Saturday. No stop on Sunday (already stopped from Sat night).
+  schedule_expression          = "cron(30 19 ? * MON-SAT *)"
   schedule_expression_timezone = "Asia/Kolkata"
 
   target {
@@ -175,8 +175,8 @@ resource "aws_scheduler_schedule" "ec2_start" {
     mode = "OFF"
   }
 
-  # Start at 9 AM IST (3:30 AM UTC) every weekday (Mon-Fri)
-  schedule_expression          = "cron(30 3 ? * MON-FRI *)"
+  # Start at 9:30 AM IST, Monday–Saturday. No start on Sunday (stays off all Sunday, 24h).
+  schedule_expression          = "cron(30 9 ? * MON-SAT *)"
   schedule_expression_timezone = "Asia/Kolkata"
 
   target {
