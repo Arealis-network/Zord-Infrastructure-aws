@@ -19,11 +19,12 @@ resource "aws_secretsmanager_secret" "shared_infra" {
 
 resource "aws_secretsmanager_secret_version" "shared_infra" {
   secret_id = aws_secretsmanager_secret.shared_infra.id
+  # NOTE: DB host + superuser creds now live in production/zord/db-connection
+  # (owned by the aws-rds-postgres module, auto-populated from the RDS endpoint).
   secret_string = jsonencode({
-    POSTGRES_SUPERUSER_PASSWORD = "CHANGE_ME"
-    S3_KMS_KEY_ID               = var.s3_kms_key_arn
-    ACM_CERTIFICATE_ARN         = var.acm_certificate_arn
-    EVIDENCE_KMS_KEY_ARN        = var.evidence_kms_key_arn
+    S3_KMS_KEY_ID        = var.s3_kms_key_arn
+    ACM_CERTIFICATE_ARN  = var.acm_certificate_arn
+    EVIDENCE_KMS_KEY_ARN = var.evidence_kms_key_arn
   })
   lifecycle { ignore_changes = [secret_string] }
 }
@@ -41,13 +42,14 @@ resource "aws_secretsmanager_secret" "edge" {
 
 resource "aws_secretsmanager_secret_version" "edge" {
   secret_id = aws_secretsmanager_secret.edge.id
+  # DB connectivity (host/user/password/DSN) is NOT here — it comes from the
+  # single Terraform-owned secret production/zord/db-connection (RDS module).
+  # Only non-DB, service-specific secrets live here (fill CHANGE_ME once).
   secret_string = jsonencode({
-    EDGE_DB_PASSWORD   = "CHANGE_ME"
     ZORD_VAULT_KEY     = "CHANGE_ME"
     VAULT_KEY_ID       = "CHANGE_ME"
     INTERNAL_ADMIN_KEY = "CHANGE_ME"
     EDGE_S3_BUCKET     = "zord-edge-ingress"
-    EDGE_READ_DSN      = "postgres://zord_user:CHANGE_ME@zord-postgres:5432/zord_edge_db?sslmode=disable"
     JWT_SIGNING_SECRET = "CHANGE_ME"
     RELAY_AUTH_TOKEN   = "CHANGE_ME"
   })
@@ -67,15 +69,14 @@ resource "aws_secretsmanager_secret" "intent" {
 
 resource "aws_secretsmanager_secret_version" "intent" {
   secret_id = aws_secretsmanager_secret.intent.id
+  # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    INTENT_DB_PASSWORD          = "CHANGE_ME"
     ZORD_VAULT_KEY              = "CHANGE_ME"
     CANNONICALS3_BUCKET         = "zord-intent-engine-canonical"
     NIRS3_BUCKET                = "zord-intent-engine-nir"
     GOVERNANCES3_BUCKET         = "zord-intent-engine-governance"
     SERVICE_JWT_SIGNING_SECRET  = "CHANGE_ME"
     RELAY_SERVICES_0_AUTH_TOKEN = "CHANGE_ME"
-    INTENT_READ_DSN             = "postgres://intent_user:CHANGE_ME@zord-postgres:5432/zord_intent_engine_db?sslmode=disable"
   })
   lifecycle { ignore_changes = [secret_string] }
 }
@@ -93,8 +94,9 @@ resource "aws_secretsmanager_secret" "token_enclave" {
 
 resource "aws_secretsmanager_secret_version" "token_enclave" {
   secret_id = aws_secretsmanager_secret.token_enclave.id
+  # DB connectivity comes from production/zord/db-connection (RDS module).
+  # KMS_KEY_ID is auto-populated by the token-enclave KMS module (not here).
   secret_string = jsonencode({
-    TOKEN_DB_PASSWORD                 = "CHANGE_ME"
     MASTER_KEY                        = "CHANGE_ME"
     TOKEN_SECRET                      = "CHANGE_ME"
     ENCLAVE_INTERNAL_TOKEN            = "CHANGE_ME"
@@ -117,13 +119,11 @@ resource "aws_secretsmanager_secret" "relay" {
 
 resource "aws_secretsmanager_secret_version" "relay" {
   secret_id = aws_secretsmanager_secret.relay.id
+  # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    RELAY_DB_PASSWORD           = "CHANGE_ME"
     RELAY_SERVICES_0_AUTH_TOKEN = "CHANGE_ME"
     RELAY_SERVICES_1_AUTH_TOKEN = "CHANGE_ME"
     RELAY_SERVICES_2_AUTH_TOKEN = "CHANGE_ME"
-    RELAY_DB_URL                = "postgres://relay_user:CHANGE_ME@zord-postgres:5432/zord_relay_db?sslmode=disable"
-    RELAY_READ_DSN              = "postgres://relay_user:CHANGE_ME@zord-postgres:5432/zord_relay_db?sslmode=disable"
   })
   lifecycle { ignore_changes = [secret_string] }
 }
@@ -141,11 +141,10 @@ resource "aws_secretsmanager_secret" "outcome" {
 
 resource "aws_secretsmanager_secret_version" "outcome" {
   secret_id = aws_secretsmanager_secret.outcome.id
+  # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    OUTCOME_DB_PASSWORD = "CHANGE_ME"
-    ZORD_VAULT_KEY      = "CHANGE_ME"
-    OUTCOME_S3_BUCKET   = "zord-outcome-engine-settlement-ingress"
-    OUTCOME_READ_DSN    = "postgres://outcome_user:CHANGE_ME@zord-postgres:5432/zord_outcome_db?sslmode=disable"
+    ZORD_VAULT_KEY    = "CHANGE_ME"
+    OUTCOME_S3_BUCKET = "zord-outcome-engine-settlement-ingress"
   })
   lifecycle { ignore_changes = [secret_string] }
 }
@@ -163,12 +162,11 @@ resource "aws_secretsmanager_secret" "evidence" {
 
 resource "aws_secretsmanager_secret_version" "evidence" {
   secret_id = aws_secretsmanager_secret.evidence.id
+  # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    EVIDENCE_DB_PASSWORD                = "CHANGE_ME"
     EVIDENCE_S3_BUCKET                  = "zord-evidence-vault"
     EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 = ""
     EVIDENCE_KMS_KEY_ARN                = var.evidence_kms_key_arn
-    EVIDENCE_READ_DSN                   = "postgres://evidence_user:CHANGE_ME@zord-postgres:5432/zord_evidence_db?sslmode=disable"
   })
   lifecycle { ignore_changes = [secret_string] }
 }
@@ -186,10 +184,11 @@ resource "aws_secretsmanager_secret" "intelligence" {
 
 resource "aws_secretsmanager_secret_version" "intelligence" {
   secret_id = aws_secretsmanager_secret.intelligence.id
+  # DB connectivity comes from production/zord/db-connection (RDS module).
+  # This service currently has no non-DB secrets; kept as an empty placeholder
+  # so the container exists (add keys here later if needed).
   secret_string = jsonencode({
-    INTELLIGENCE_DB_PASSWORD  = "CHANGE_ME"
-    INTELLIGENCE_DATABASE_URL = "postgres://zpi:CHANGE_ME@zord-postgres:5432/zord_intelligence?sslmode=disable"
-    INTELLIGENCE_READ_DSN     = "postgres://zpi:CHANGE_ME@zord-postgres:5432/zord_intelligence?sslmode=disable"
+    PLACEHOLDER = "unused"
   })
   lifecycle { ignore_changes = [secret_string] }
 }

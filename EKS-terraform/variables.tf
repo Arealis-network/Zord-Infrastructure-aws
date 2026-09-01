@@ -141,3 +141,25 @@ variable "waf_rate_limit" {
   type        = number
   default     = 2000
 }
+
+############################
+# RDS PostgreSQL (free-tier defaults; change to scale to paid)
+############################
+
+variable "rds_instance_class" {
+  description = "RDS instance class. Free-tier: db.t3.micro. Scale later to db.t3.small / db.t3.medium."
+  type        = string
+  default     = "db.t3.micro"
+}
+
+variable "rds_allocated_storage" {
+  description = "RDS storage in GB. Free tier covers 20 GB."
+  type        = number
+  default     = 20
+}
+
+variable "rds_multi_az" {
+  description = "Multi-AZ standby (HA). NOT free tier — leave false until production paid tier."
+  type        = bool
+  default     = false
+}

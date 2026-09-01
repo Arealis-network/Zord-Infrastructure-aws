@@ -310,6 +310,30 @@ module "s3_buckets" {
 }
 
 ############################
+# RDS POSTGRES MODULE (free-tier db.t3.micro; scale via variables)
+############################
+# One RDS instance hosts ALL microservice databases. Private subnets, KMS
+# encrypted, ingress locked to the EKS cluster SG. Master password is generated
+# by Terraform and published to Secrets Manager (production/zord/db-connection).
+
+module "rds_postgres" {
+  source = "./modules/aws-rds-postgres"
+
+  environment               = var.environment
+  eks_name_prefix           = local.eks_name_prefix
+  eks_resource_prefix       = local.eks_resource_prefix
+  vpc_id                    = module.vpc.vpc_id
+  vpc_cidr                  = local.vpc_cidr
+  private_subnet_ids        = module.vpc.private_subnet_ids
+  cluster_security_group_id = module.eks.cluster_security_group_id
+  kms_key_arn               = module.kms.s3_kms_key_arn
+
+  instance_class    = var.rds_instance_class
+  allocated_storage = var.rds_allocated_storage
+  multi_az          = var.rds_multi_az
+}
+
+############################
 # S3 ACCESS MODULE (Pod Identity)
 ############################
 

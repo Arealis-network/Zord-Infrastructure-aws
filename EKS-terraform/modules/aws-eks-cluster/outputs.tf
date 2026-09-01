@@ -36,3 +36,8 @@ output "cluster_ca_certificate" {
   description = "Base64-encoded cluster CA certificate."
   value       = aws_eks_cluster.eks.certificate_authority[0].data
 }
+
+output "cluster_security_group_id" {
+  description = "EKS-managed cluster security group (attached to nodes/pods). Used to lock RDS ingress to the cluster."
+  value       = aws_eks_cluster.eks.vpc_config[0].cluster_security_group_id
+}

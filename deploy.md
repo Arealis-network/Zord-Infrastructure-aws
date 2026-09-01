@@ -146,6 +146,17 @@ Fill in: all `*_DB_PASSWORD`, `ZORD_VAULT_KEY`, `VAULT_KEY_ID`,
 `INTERNAL_ADMIN_KEY`, all `RELAY_*_AUTH_TOKEN`, `GEMINI_API_KEYS`,
 `SLACK_*_WEBHOOK_URL`, `POSTGRES_SUPERUSER_PASSWORD`.
 
+**DB usernames** are pre-set (`*_DB_USER`): `zord_user` (edge), `intent_user`,
+`token_user`, `relay_user`, `outcome_user`, `evidence_user`, `zpi`
+(intelligence), `postgres` (superuser). Change them only if your Postgres
+bootstrap uses different names.
+
+> **IMPORTANT — keep the password in sync:** each service also has a full
+> connection string (`*_READ_DSN` / `*_DATABASE_URL`) with the password embedded
+> (`postgres://<user>:<password>@...`). When you set a real `*_DB_PASSWORD`, put
+> the **same** password inside that service's DSN string too, or the app will
+> fail to connect.
+
 ### ArgoCD login (auto-created — no edit)
 
 ```

@@ -21,3 +21,5 @@ variable "evidence_kms_key_arn" {
   description = "KMS key ARN for evidence archive encryption (NEW-P1-06, auto-populated)."
   type        = string
 }
+
+

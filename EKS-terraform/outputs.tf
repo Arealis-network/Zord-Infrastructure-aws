@@ -231,3 +231,22 @@ output "cloudfront_origin_verify_secret" {
 }
 
 
+
+############################
+# rds postgres output
+############################
+
+output "rds_endpoint" {
+  description = "RDS PostgreSQL endpoint (DB_HOST). All services connect here."
+  value       = module.rds_postgres.endpoint
+}
+
+output "rds_instance_id" {
+  description = "RDS instance identifier."
+  value       = module.rds_postgres.instance_id
+}
+
+output "rds_connection_secret" {
+  description = "Secrets Manager secret holding RDS endpoint + master creds."
+  value       = "${var.environment}/zord/db-connection"
+}
