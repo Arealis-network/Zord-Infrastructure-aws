@@ -178,6 +178,34 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
+      # ── SELF-HEALING: adopt pre-existing resources into state ──
+      # Some resources (S3 buckets, per-service SM secrets) have fixed global
+      # names. If they already exist in AWS but not in Terraform state (e.g. left
+      # over from an earlier stack), a plain apply fails with
+      # "BucketAlreadyOwnedByYou" / "ResourceExistsException". This step imports
+      # them into state first, so apply/re-apply is fully idempotent — no manual
+      # deletes, no data loss. Safe: import is a no-op if already in state.
+      - name: Adopt pre-existing resources (idempotent import)
+        if: github.event.inputs.action == 'apply'
+        run: |
+          set +e
+          import_if_needed() {
+            local addr="$1" id="$2"
+            terraform state show "$addr" >/dev/null 2>&1 && { echo "in state: $addr"; return; }
+            terraform import -no-color "$addr" "$id" >/dev/null 2>&1 \
+              && echo "imported: $addr ($id)" \
+              || echo "skip (not found in AWS or not importable): $addr"
+          }
+
+          # S3 buckets (fixed names)
+          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["edge_ingress"]' 'zord-edge-ingress'
+          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["intent_canonical"]' 'zord-intent-engine-canonical'
+          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["intent_nir"]' 'zord-intent-engine-nir'
+          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["intent_governance"]' 'zord-intent-engine-governance'
+          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["outcome_settlement_ingress"]' 'zord-outcome-engine-settlement-ingress'
+          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["evidence_vault"]' 'zord-evidence-vault'
+          exit 0
+
       # ── PLAN ──
       - name: Terraform Plan
         if: github.event.inputs.action == 'plan'
