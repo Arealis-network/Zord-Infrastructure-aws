@@ -62,9 +62,10 @@ resource "helm_release" "argocd" {
         type = "ClusterIP"
       }
       ingress = {
-        enabled = true
+        enabled          = true
+        ingressClassName = "alb"
+        hostname         = "argocd.${var.domain}"
         annotations = {
-          "kubernetes.io/ingress.class"                    = "alb"
           "alb.ingress.kubernetes.io/group.name"           = var.shared_alb_group
           "alb.ingress.kubernetes.io/scheme"               = "internet-facing"
           "alb.ingress.kubernetes.io/target-type"          = "ip"
@@ -74,10 +75,7 @@ resource "helm_release" "argocd" {
           "alb.ingress.kubernetes.io/healthcheck-protocol" = "HTTPS"
           "alb.ingress.kubernetes.io/healthcheck-path"     = "/healthz"
         }
-        hosts = ["argocd.${var.domain}"]
-        tls = [{
-          hosts = ["argocd.${var.domain}"]
-        }]
+        tls = true
       }
     }
     configs = {
