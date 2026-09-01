@@ -565,33 +565,43 @@ jobs:
           REMAINING=$(terraform state list 2>/dev/null | grep -c '.' || echo "0")
 
           # ── Check every AWS resource category ──
-          # EKS
-          EKS_CLUSTERS=$(aws eks list-clusters --region "${REGION}" --query 'clusters' --output text 2>/dev/null | wc -w || echo "0")
+          # EKS — only this project's clusters (name starts with arealis-zord), ignore other teams'.
+          EKS_CLUSTERS=$(aws eks list-clusters --region "${REGION}" --query "clusters[?starts_with(@,'arealis-zord')]" --output text 2>/dev/null | wc -w || echo "0")
           [ "${EKS_CLUSTERS}" -eq 0 ] && EKS_STATUS="✅ Deleted" || EKS_STATUS="❌ ${EKS_CLUSTERS} cluster(s) still exist"
 
-          # EC2
-          EC2_RUNNING=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:ManagedBy,Values=Terraform" --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null | wc -w || echo "0")
+          # EC2 — only this project's (Project tag), ignore other teams'.
+          EC2_RUNNING=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:Project,Values=arealis-zord-eks" --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${EC2_RUNNING}" -eq 0 ] && EC2_STATUS="✅ Deleted" || EC2_STATUS="❌ ${EC2_RUNNING} instance(s) running"
 
-          # VPC
-          VPC_COUNT=$(aws ec2 describe-vpcs --region "${REGION}" --filters "Name=isDefault,Values=false" --query 'Vpcs[*].VpcId' --output text 2>/dev/null | wc -w || echo "0")
+          # VPC — ONLY this project's VPC (tagged Project=arealis-zord by Terraform).
+          # Other teams' VPCs in the same account are ignored.
+          VPC_COUNT=$(aws ec2 describe-vpcs --region "${REGION}" --filters "Name=isDefault,Values=false" "Name=tag:Project,Values=arealis-zord-eks" --query 'Vpcs[*].VpcId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${VPC_COUNT}" -eq 0 ] && VPC_STATUS="✅ Deleted" || VPC_STATUS="❌ ${VPC_COUNT} VPC(s) still exist"
 
-          # NAT Gateways
-          NAT_COUNT=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null | wc -w || echo "0")
+          # NAT Gateways — only this project's (Project tag), ignore other teams'.
+          NAT_COUNT=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" "Name=tag:Project,Values=arealis-zord-eks" --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${NAT_COUNT}" -eq 0 ] && NAT_STATUS="✅ Deleted" || NAT_STATUS="❌ ${NAT_COUNT} NAT gateway(s)"
 
-          # Elastic IPs
-          EIP_COUNT=$(aws ec2 describe-addresses --region "${REGION}" --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null | wc -w || echo "0")
+          # Elastic IPs — only this project's (Project tag), ignore other teams'.
+          EIP_COUNT=$(aws ec2 describe-addresses --region "${REGION}" --filters "Name=tag:Project,Values=arealis-zord-eks" --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${EIP_COUNT}" -eq 0 ] && EIP_STATUS="✅ Released" || EIP_STATUS="❌ ${EIP_COUNT} unassociated EIP(s)"
 
-          # EBS Volumes (orphaned)
-          EBS_AVAILABLE=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=available" --query 'Volumes[*].VolumeId' --output text 2>/dev/null | wc -w || echo "0")
+          # EBS Volumes (orphaned) — only this project's (Project tag), ignore other teams'.
+          EBS_AVAILABLE=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=available" "Name=tag:Project,Values=arealis-zord-eks" --query 'Volumes[*].VolumeId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${EBS_AVAILABLE}" -eq 0 ] && EBS_STATUS="✅ Deleted" || EBS_STATUS="❌ ${EBS_AVAILABLE} orphaned volume(s)"
 
-          # Load Balancers
-          LB_COUNT=$(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${LB_COUNT}" -eq 0 ] && LB_STATUS="✅ Deleted" || LB_STATUS="❌ ${LB_COUNT} LB(s) still exist"
+          # Load Balancers — ONLY ones created by THIS project's EKS cluster.
+          # The AWS LB Controller tags every LB it makes with elbv2.k8s.aws/cluster=<cluster>.
+          # Other teams' LBs in the same account (e.g. smokesimulator) are ignored.
+          LB_COUNT=0
+          for arn in $(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text 2>/dev/null); do
+            [ -z "$arn" ] && continue
+            OWNED=$(aws elbv2 describe-tags --region "${REGION}" --resource-arns "$arn" \
+              --query "TagDescriptions[0].Tags[?Key=='elbv2.k8s.aws/cluster' || Key=='ingress.k8s.aws/stack'] | [?contains(Value,'zord') || contains(Value,'arealis')].Value" \
+              --output text 2>/dev/null)
+            [ -n "$OWNED" ] && LB_COUNT=$((LB_COUNT+1))
+          done
+          [ "${LB_COUNT}" -eq 0 ] && LB_STATUS="✅ Deleted" || LB_STATUS="❌ ${LB_COUNT} zord LB(s) still exist"
 
           # IAM Roles
           IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'arealis-zord')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
@@ -605,12 +615,18 @@ jobs:
           SECRET_COUNT=$(aws secretsmanager list-secrets --region "${REGION}" --filters Key=name,Values="${ENV}/zord" --query 'SecretList[*].Name' --output text 2>/dev/null | wc -w || echo "0")
           [ "${SECRET_COUNT}" -eq 0 ] && SECRET_STATUS="✅ Deleted" || SECRET_STATUS="❌ ${SECRET_COUNT} secret(s)"
 
-          # OIDC Providers (EKS)
-          OIDC_COUNT=$(aws iam list-open-id-connect-providers --query 'OpenIDConnectProviderList[*].Arn' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${OIDC_COUNT}" -le 1 ] && OIDC_STATUS="✅ Deleted" || OIDC_STATUS="❌ ${OIDC_COUNT} provider(s)"
+          # OIDC Providers — only ones bound to a still-existing arealis-zord EKS cluster.
+          # Other teams' OIDC providers in the same account are ignored.
+          OIDC_COUNT=0
+          for arn in $(aws iam list-open-id-connect-providers --query 'OpenIDConnectProviderList[*].Arn' --output text 2>/dev/null); do
+            [ -z "$arn" ] && continue
+            aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$arn" \
+              --query 'Tags' --output text 2>/dev/null | grep -qi "arealis-zord" && OIDC_COUNT=$((OIDC_COUNT+1))
+          done
+          [ "${OIDC_COUNT}" -eq 0 ] && OIDC_STATUS="✅ Deleted" || OIDC_STATUS="❌ ${OIDC_COUNT} provider(s)"
 
-          # CloudWatch Log Groups
-          CW_LOGS=$(aws logs describe-log-groups --region "${REGION}" --log-group-name-prefix "/aws/eks/" --query 'logGroups[*].logGroupName' --output text 2>/dev/null | wc -w || echo "0")
+          # CloudWatch Log Groups — only this project's cluster log group, ignore other teams'.
+          CW_LOGS=$(aws logs describe-log-groups --region "${REGION}" --log-group-name-prefix "/aws/eks/arealis-zord" --query 'logGroups[*].logGroupName' --output text 2>/dev/null | wc -w || echo "0")
           [ "${CW_LOGS}" -eq 0 ] && CW_STATUS="✅ Deleted" || CW_STATUS="❌ ${CW_LOGS} log group(s)"
 
           # EventBridge Schedulers
