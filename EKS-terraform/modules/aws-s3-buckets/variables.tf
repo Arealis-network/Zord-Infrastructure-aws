@@ -8,6 +8,8 @@ variable "kms_key_arn" {
   type        = string
 }
 
+
+
 variable "edge_bucket_name" {
   description = "S3 bucket name for zord-edge ingress."
   type        = string

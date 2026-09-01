@@ -295,6 +295,28 @@ module "s3_buckets" {
   kms_key_arn = module.kms.s3_kms_key_arn
 }
 
+# Adopt pre-existing S3 buckets (configuration-driven import — HashiCorp's
+# recommended, CI-safe, atomic method). import blocks are only allowed in the
+# ROOT module. When adopt_existing_buckets=true, Terraform imports the buckets
+# that already exist in AWS into state during apply — no BucketAlreadyOwnedByYou,
+# no manual deletes. false on a greenfield account -> Terraform just creates them.
+locals {
+  s3_bucket_ids = {
+    edge_ingress               = "zord-edge-ingress"
+    intent_canonical           = "zord-intent-engine-canonical"
+    intent_nir                 = "zord-intent-engine-nir"
+    intent_governance          = "zord-intent-engine-governance"
+    outcome_settlement_ingress = "zord-outcome-engine-settlement-ingress"
+    evidence_vault             = "zord-evidence-vault"
+  }
+}
+
+import {
+  for_each = var.adopt_existing_buckets ? local.s3_bucket_ids : {}
+  to       = module.s3_buckets.aws_s3_bucket.this[each.key]
+  id       = each.value
+}
+
 ############################
 # RDS POSTGRES MODULE (free-tier db.t3.micro; scale via variables)
 ############################

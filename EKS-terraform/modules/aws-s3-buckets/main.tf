@@ -16,6 +16,12 @@ locals {
 }
 
 # ─────────────────────────────────────────
+# NOTE: pre-existing buckets are adopted via a configuration-driven `import`
+# block in the ROOT module (import blocks are only allowed in root), gated by
+# var.adopt_existing_buckets. See EKS-terraform/main.tf.
+# ─────────────────────────────────────────
+
+# ─────────────────────────────────────────
 # S3 Buckets
 # ─────────────────────────────────────────
 

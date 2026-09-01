@@ -163,3 +163,13 @@ variable "rds_multi_az" {
   type        = bool
   default     = false
 }
+
+############################
+# S3 bucket adoption
+############################
+
+variable "adopt_existing_buckets" {
+  description = "Set true to import pre-existing S3 buckets into state (adopt them) instead of failing with BucketAlreadyOwnedByYou. Use true when the 6 zord-* buckets already exist in AWS; false for a greenfield account. Drive via GitHub variable ADOPT_EXISTING_BUCKETS."
+  type        = bool
+  default     = false
+}

@@ -56,6 +56,9 @@ env:
   TF_VAR_enable_cloudfront_edge: ${{ vars.ENABLE_CLOUDFRONT_EDGE || 'true' }}
   # Tag the AWS LB Controller puts on the shared ALB fronting Kong (auto-discovery).
   TF_VAR_kong_alb_stack_tag: ${{ vars.KONG_ALB_STACK_TAG || 'zord-shared-alb' }}
+  # Adopt (import) pre-existing S3 buckets instead of failing with
+  # BucketAlreadyOwnedByYou. Set true while the 6 zord-* buckets already exist.
+  TF_VAR_adopt_existing_buckets: ${{ vars.ADOPT_EXISTING_BUCKETS || 'true' }}
 
 jobs:
   # ════════════════════════════════════════════════════════════════
@@ -177,43 +180,6 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
-
-      # ── SELF-HEALING: adopt pre-existing resources into state ──
-      # Some resources (S3 buckets, per-service SM secrets) have fixed global
-      # names. If they already exist in AWS but not in Terraform state (e.g. left
-      # over from an earlier stack), a plain apply fails with
-      # "BucketAlreadyOwnedByYou" / "ResourceExistsException". This step imports
-      # them into state first, so apply/re-apply is fully idempotent — no manual
-      # deletes, no data loss. Safe: import is a no-op if already in state.
-      - name: Adopt pre-existing resources (idempotent import)
-        if: github.event.inputs.action == 'apply'
-        run: |
-          set +e
-          echo "== Adopting any pre-existing S3 buckets into Terraform state =="
-          import_if_needed() {
-            addr="$1"; id="$2"
-            if terraform state show "$addr" >/dev/null 2>&1; then
-              echo "already in state: $addr"
-              return
-            fi
-            echo "--- importing $addr ($id) ---"
-            terraform import -no-color "$addr" "$id"
-            rc=$?
-            if [ $rc -eq 0 ]; then
-              echo "OK imported: $addr"
-            else
-              echo "NOTE: import failed for $addr (bucket may not exist in AWS yet — apply will create it)"
-            fi
-          }
-
-          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["edge_ingress"]' 'zord-edge-ingress'
-          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["intent_canonical"]' 'zord-intent-engine-canonical'
-          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["intent_nir"]' 'zord-intent-engine-nir'
-          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["intent_governance"]' 'zord-intent-engine-governance'
-          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["outcome_settlement_ingress"]' 'zord-outcome-engine-settlement-ingress'
-          import_if_needed 'module.s3_buckets.aws_s3_bucket.this["evidence_vault"]' 'zord-evidence-vault'
-          echo "== Import step done =="
-          exit 0
 
       # ── PLAN ──
       - name: Terraform Plan
