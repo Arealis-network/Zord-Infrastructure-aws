@@ -230,8 +230,12 @@ jobs:
           # IAM roles
           IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'arealis-zord')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
 
-          # S3 buckets
-          S3_BUCKETS=$(aws s3api list-buckets --query "Buckets[?starts_with(Name,'zord-')].Name" --output text 2>/dev/null || echo "")
+          # S3 buckets — ONLY the exact 6 this Terraform creates (ignore state bucket / other teams).
+          OUR_BUCKETS="zord-edge-ingress zord-intent-engine-canonical zord-intent-engine-nir zord-intent-engine-governance zord-outcome-engine-settlement-ingress zord-evidence-vault"
+          S3_BUCKETS=""
+          for b in $OUR_BUCKETS; do
+            aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && S3_BUCKETS="${S3_BUCKETS} $b"
+          done
           S3_COUNT=$(echo "${S3_BUCKETS}" | wc -w || echo "0")
 
           # Secrets Manager
@@ -521,6 +525,12 @@ jobs:
           echo "============================================"
           REGION="${{ env.AWS_REGION_VALUE }}"
 
+          # If state is already empty, destroy already succeeded — nothing to clean.
+          if [ "$(terraform state list 2>/dev/null | grep -c '.')" -eq 0 ]; then
+            echo "Terraform state is empty — destroy already complete. Nothing to do."
+            exit 0
+          fi
+
           # If cluster is gone, remove all K8s resources from state
           CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
           if [ -n "${CLUSTER_NAME}" ] && ! aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" >/dev/null 2>&1; then
@@ -607,8 +617,13 @@ jobs:
           IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'arealis-zord')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
           [ "${IAM_ROLES}" -eq 0 ] && IAM_STATUS="✅ Deleted" || IAM_STATUS="❌ ${IAM_ROLES} role(s)"
 
-          # S3 Buckets (zord-*)
-          S3_COUNT=$(aws s3api list-buckets --query "Buckets[?starts_with(Name,'zord-')].Name" --output text 2>/dev/null | wc -w || echo "0")
+          # S3 Buckets — count ONLY the exact 6 buckets THIS Terraform creates.
+          # Any other zord-* bucket (state bucket, another team's bucket) is ignored.
+          OUR_BUCKETS="zord-edge-ingress zord-intent-engine-canonical zord-intent-engine-nir zord-intent-engine-governance zord-outcome-engine-settlement-ingress zord-evidence-vault"
+          S3_COUNT=0
+          for b in $OUR_BUCKETS; do
+            aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && S3_COUNT=$((S3_COUNT+1))
+          done
           [ "${S3_COUNT}" -eq 0 ] && S3_STATUS="✅ Deleted" || S3_STATUS="❌ ${S3_COUNT} bucket(s)"
 
           # Secrets Manager
