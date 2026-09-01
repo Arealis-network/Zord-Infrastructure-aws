@@ -384,14 +384,14 @@ jobs:
               kubectl patch ns "$ns" --type json -p='[{"op":"replace","path":"/spec/finalizers","value":[]}]' 2>/dev/null || true
             done
 
-            # Uninstall all Helm releases
-            helm list -A -o json 2>/dev/null \
-              | jq -r '.[] | .name + " " + .namespace' \
-              | while read -r RELEASE NS; do
-                  [ -z "${RELEASE}" ] && continue
-                  echo "Uninstalling: ${RELEASE} in namespace: ${NS}"
-                  helm uninstall "${RELEASE}" --namespace "${NS}" --ignore-not-found || true
-                done || true
+            # Delete Ingresses FIRST (before Helm uninstall) so External DNS — still
+            # running — sees them go and cleans up the Route53 records it created
+            # (argocd.zordnet.com, api.zordnet.com). If we uninstalled Helm first,
+            # External DNS would be gone and the records would be orphaned.
+            kubectl get ingress -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null | while read -r NS ING; do
+              [ -z "$NS" ] && continue
+              kubectl delete ingress "$ING" -n "$NS" --ignore-not-found=true || true
+            done
 
             # Delete LoadBalancer services (they create AWS LBs outside Terraform)
             kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null | while read -r NS SVC; do
@@ -399,11 +399,18 @@ jobs:
               kubectl delete svc "$SVC" -n "$NS" --ignore-not-found=true || true
             done
 
-            # Delete Ingresses (they create ALBs)
-            kubectl get ingress -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null | while read -r NS ING; do
-              [ -z "$NS" ] && continue
-              kubectl delete ingress "$ING" -n "$NS" --ignore-not-found=true || true
-            done
+            # Give External DNS time to delete the Route53 records for the removed ingresses.
+            echo "Waiting 45s for External DNS to clean up Route53 records..."
+            sleep 45
+
+            # Now uninstall all Helm releases (External DNS included — its cleanup is done)
+            helm list -A -o json 2>/dev/null \
+              | jq -r '.[] | .name + " " + .namespace' \
+              | while read -r RELEASE NS; do
+                  [ -z "${RELEASE}" ] && continue
+                  echo "Uninstalling: ${RELEASE} in namespace: ${NS}"
+                  helm uninstall "${RELEASE}" --namespace "${NS}" --ignore-not-found || true
+                done || true
 
             # Delete PVCs (they create EBS volumes)
             kubectl get pvc -A --no-headers 2>/dev/null | while read -r NS PVC _; do

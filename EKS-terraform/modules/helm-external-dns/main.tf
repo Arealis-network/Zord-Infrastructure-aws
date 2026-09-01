@@ -81,11 +81,13 @@ resource "helm_release" "external_dns" {
     value = "aws"
   }
 
-  # upsert-only: create/update records but NEVER delete. Safe on a shared zone
-  # where other teams have manual records (demo, mail, www). No accidental deletes.
+  # sync: create/update AND delete records so a destroy removes OUR records cleanly.
+  # Safe on the shared zone because of txtOwnerId below — External DNS only deletes
+  # records carrying ITS OWN TXT owner stamp. Other teams' records (demo, mail, www)
+  # have no matching stamp and are NEVER touched.
   set {
     name  = "policy"
-    value = "upsert-only"
+    value = "sync"
   }
 
   set {
