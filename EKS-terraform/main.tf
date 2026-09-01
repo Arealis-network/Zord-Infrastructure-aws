@@ -436,6 +436,23 @@ module "aws_lb_controller" {
 }
 
 ############################
+# EXTERNAL DNS MODULE
+############################
+# Auto-creates Route53 records from Ingress hosts (argocd.zordnet.com, api.zordnet.com,
+# etc.). No manual DNS records. Domain-filtered to var.ses_domain, Pod Identity IAM.
+
+module "external_dns" {
+  source = "./modules/helm-external-dns"
+
+  cluster_name             = module.eks.cluster_name
+  domain                   = var.ses_domain
+  eks_name_prefix          = local.eks_name_prefix
+  eks_resource_prefix      = local.eks_resource_prefix
+  node_groups_ready        = module.node_groups.stateless_node_group_id
+  pod_identity_addon_ready = module.addons.pod_identity_addon_id
+}
+
+############################
 # EXTERNAL SECRETS MODULE
 ############################
 
