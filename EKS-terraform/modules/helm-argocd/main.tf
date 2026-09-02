@@ -95,208 +95,159 @@ resource "helm_release" "argocd" {
         argocdServerAdminPassword = bcrypt(random_password.argocd_admin.result)
       }
     }
+  })]
 
-    # ─────────────────────────────────────────
-    # ArgoCD Application CRs created BY the Helm chart (extraObjects) — so they
-    # appear automatically on terraform apply, right after the Application CRD is
-    # installed (no provider CRD-race, no manual kubectl). You just click Sync.
-    # zord-platform = MANUAL sync (controlled bring-up). monitoring = AUTO sync.
-    # ─────────────────────────────────────────
-    extraObjects = [
-      {
-        apiVersion = "argoproj.io/v1alpha1"
-        kind       = "Application"
-        metadata = {
-          name       = "zord-platform"
-          namespace  = "argocd"
-          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+  depends_on = [var.node_groups_ready]
+}
+
+# ─────────────────────────────────────────
+# ArgoCD Applications via the dedicated argocd-apps chart.
+# This runs AS A SEPARATE helm release AFTER the main argocd install, so the
+# Application CRD is already established (fixes the "no matches for kind
+# Application / ensure CRDs are installed first" error that extraObjects hit).
+# All 5 apps appear on apply. zord/kong/logging/tracing = MANUAL, monitoring = AUTO.
+# ─────────────────────────────────────────
+
+resource "helm_release" "argocd_apps" {
+  name       = "argocd-apps"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argocd-apps"
+  version    = var.apps_chart_version
+  namespace  = "argocd"
+
+  values = [yamlencode({
+    applications = {
+      zord-platform = {
+        namespace  = "argocd"
+        finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        project    = "default"
+        source = {
+          repoURL        = var.app_repo_url
+          targetRevision = "main"
+          path           = "kubernetes/eks"
         }
-        spec = {
-          project = "default"
-          source = {
-            repoURL        = var.app_repo_url
-            targetRevision = "main"
-            path           = "kubernetes/eks"
-          }
-          destination = {
-            server    = "https://kubernetes.default.svc"
-            namespace = "zord"
-          }
-          syncPolicy = {
-            # MANUAL — no automated block. You click Sync for the first bring-up.
-            syncOptions = [
-              "CreateNamespace=true",
-              "PrunePropagationPolicy=foreground",
-              "PruneLast=true",
-              "ApplyOutOfSyncOnly=true",
-            ]
-            retry = {
-              limit   = 3
-              backoff = { duration = "30s", factor = 2, maxDuration = "3m" }
-            }
-          }
+        destination = {
+          server    = "https://kubernetes.default.svc"
+          namespace = "zord"
         }
-      },
-      {
-        apiVersion = "argoproj.io/v1alpha1"
-        kind       = "Application"
-        metadata = {
-          name       = "monitoring"
-          namespace  = "argocd"
-          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        syncPolicy = {
+          syncOptions = ["CreateNamespace=true", "PrunePropagationPolicy=foreground", "PruneLast=true", "ApplyOutOfSyncOnly=true"]
         }
-        spec = {
-          project = "default"
-          sources = [
-            {
-              repoURL        = "https://prometheus-community.github.io/helm-charts"
-              chart          = "kube-prometheus-stack"
-              targetRevision = "65.1.1"
-              helm = {
-                valuesObject = {
-                  grafana = {
-                    ingress = {
-                      enabled          = true
-                      ingressClassName = "alb"
-                      hosts            = ["grafana.${var.domain}"]
-                      annotations = {
-                        "alb.ingress.kubernetes.io/group.name"   = var.shared_alb_group
-                        "alb.ingress.kubernetes.io/scheme"       = "internet-facing"
-                        "alb.ingress.kubernetes.io/target-type"  = "ip"
-                        "alb.ingress.kubernetes.io/listen-ports" = "[{\"HTTPS\":443}]"
-                        "alb.ingress.kubernetes.io/ssl-redirect" = "443"
-                      }
+      }
+      kong-api-gateway = {
+        namespace  = "argocd"
+        finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        project    = "default"
+        source = {
+          repoURL        = var.app_repo_url
+          targetRevision = "main"
+          path           = "kubernetes/api-gateway"
+        }
+        destination = {
+          server    = "https://kubernetes.default.svc"
+          namespace = "api-gateway"
+        }
+        syncPolicy = {
+          syncOptions = ["CreateNamespace=true", "PrunePropagationPolicy=foreground", "ApplyOutOfSyncOnly=true"]
+        }
+      }
+      logging = {
+        namespace  = "argocd"
+        finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        project    = "default"
+        source = {
+          repoURL        = var.app_repo_url
+          targetRevision = "main"
+          path           = "kubernetes/logging"
+        }
+        destination = {
+          server    = "https://kubernetes.default.svc"
+          namespace = "logging"
+        }
+        syncPolicy = {
+          syncOptions = ["CreateNamespace=true", "PrunePropagationPolicy=foreground", "ApplyOutOfSyncOnly=true"]
+        }
+      }
+      tracing = {
+        namespace  = "argocd"
+        finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        project    = "default"
+        source = {
+          repoURL        = var.app_repo_url
+          targetRevision = "main"
+          path           = "kubernetes/tracing"
+        }
+        destination = {
+          server    = "https://kubernetes.default.svc"
+          namespace = "tracing"
+        }
+        syncPolicy = {
+          syncOptions = ["CreateNamespace=true", "PrunePropagationPolicy=foreground", "ApplyOutOfSyncOnly=true"]
+        }
+      }
+      monitoring = {
+        namespace  = "argocd"
+        finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        project    = "default"
+        sources = [
+          {
+            repoURL        = "https://prometheus-community.github.io/helm-charts"
+            chart          = "kube-prometheus-stack"
+            targetRevision = "65.1.1"
+            helm = {
+              valuesObject = {
+                grafana = {
+                  ingress = {
+                    enabled          = true
+                    ingressClassName = "alb"
+                    hosts            = ["grafana.${var.domain}"]
+                    annotations = {
+                      "alb.ingress.kubernetes.io/group.name"   = var.shared_alb_group
+                      "alb.ingress.kubernetes.io/scheme"       = "internet-facing"
+                      "alb.ingress.kubernetes.io/target-type"  = "ip"
+                      "alb.ingress.kubernetes.io/listen-ports" = "[{\"HTTPS\":443}]"
+                      "alb.ingress.kubernetes.io/ssl-redirect" = "443"
                     }
                   }
-                  prometheus = {
-                    prometheusSpec = {
-                      retention                               = "15d"
-                      serviceMonitorSelectorNilUsesHelmValues = false
-                      storageSpec = {
-                        volumeClaimTemplate = {
-                          spec = {
-                            storageClassName = "gp3"
-                            accessModes      = ["ReadWriteOnce"]
-                            resources        = { requests = { storage = "20Gi" } }
-                          }
+                }
+                prometheus = {
+                  prometheusSpec = {
+                    retention                               = "15d"
+                    serviceMonitorSelectorNilUsesHelmValues = false
+                    storageSpec = {
+                      volumeClaimTemplate = {
+                        spec = {
+                          storageClassName = "gp3"
+                          accessModes      = ["ReadWriteOnce"]
+                          resources        = { requests = { storage = "20Gi" } }
                         }
                       }
                     }
                   }
                 }
               }
-            },
-            {
-              repoURL        = var.app_repo_url
-              targetRevision = "main"
-              path           = "kubernetes/monitoring"
-            },
-          ]
-          destination = {
-            server    = "https://kubernetes.default.svc"
-            namespace = "monitoring"
-          }
-          syncPolicy = {
-            automated = { prune = true, selfHeal = true }
-            syncOptions = [
-              "CreateNamespace=true",
-              "ServerSideApply=true",
-            ]
-          }
-        }
-      },
-      {
-        apiVersion = "argoproj.io/v1alpha1"
-        kind       = "Application"
-        metadata = {
-          name       = "kong-api-gateway"
-          namespace  = "argocd"
-          finalizers = ["resources-finalizer.argocd.argoproj.io"]
-        }
-        spec = {
-          project = "default"
-          source = {
+            }
+          },
+          {
             repoURL        = var.app_repo_url
             targetRevision = "main"
-            path           = "kubernetes/api-gateway"
-          }
-          destination = {
-            server    = "https://kubernetes.default.svc"
-            namespace = "api-gateway"
-          }
-          syncPolicy = {
-            # MANUAL for first bring-up (flip to automated later).
-            syncOptions = [
-              "CreateNamespace=true",
-              "PrunePropagationPolicy=foreground",
-              "ApplyOutOfSyncOnly=true",
-            ]
-          }
-          ignoreDifferences = [
-            { group = "apps", kind = "Deployment", jsonPointers = ["/spec/replicas"] },
-          ]
+            path           = "kubernetes/monitoring"
+          },
+        ]
+        destination = {
+          server    = "https://kubernetes.default.svc"
+          namespace = "monitoring"
         }
-      },
-      {
-        apiVersion = "argoproj.io/v1alpha1"
-        kind       = "Application"
-        metadata = {
-          name       = "logging"
-          namespace  = "argocd"
-          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        syncPolicy = {
+          automated   = { prune = true, selfHeal = true }
+          syncOptions = ["CreateNamespace=true", "ServerSideApply=true"]
         }
-        spec = {
-          project = "default"
-          source = {
-            repoURL        = var.app_repo_url
-            targetRevision = "main"
-            path           = "kubernetes/logging"
-          }
-          destination = {
-            server    = "https://kubernetes.default.svc"
-            namespace = "logging"
-          }
-          syncPolicy = {
-            syncOptions = [
-              "CreateNamespace=true",
-              "PrunePropagationPolicy=foreground",
-              "ApplyOutOfSyncOnly=true",
-            ]
-          }
-        }
-      },
-      {
-        apiVersion = "argoproj.io/v1alpha1"
-        kind       = "Application"
-        metadata = {
-          name       = "tracing"
-          namespace  = "argocd"
-          finalizers = ["resources-finalizer.argocd.argoproj.io"]
-        }
-        spec = {
-          project = "default"
-          source = {
-            repoURL        = var.app_repo_url
-            targetRevision = "main"
-            path           = "kubernetes/tracing"
-          }
-          destination = {
-            server    = "https://kubernetes.default.svc"
-            namespace = "tracing"
-          }
-          syncPolicy = {
-            syncOptions = [
-              "CreateNamespace=true",
-              "PrunePropagationPolicy=foreground",
-              "ApplyOutOfSyncOnly=true",
-            ]
-          }
-        }
-      },
-    ]
+      }
+    }
   })]
 
-  depends_on = [var.node_groups_ready]
+  # Must run AFTER the main argocd release so the Application CRD exists.
+  depends_on = [helm_release.argocd]
 }
 
 # ─────────────────────────────────────────

@@ -81,6 +81,16 @@ resource "helm_release" "lb_controller" {
     value = "aws-load-balancer-controller"
   }
 
+  # Disable the Service mutating webhook. We expose everything via Ingress (ALB),
+  # NOT Service type=LoadBalancer, so we don't need it. Leaving it on makes the
+  # webhook intercept EVERY Service creation cluster-wide — and while the controller
+  # pods are still starting, that blocks other charts (e.g. External Secrets) with
+  # "no endpoints available for aws-load-balancer-webhook-service". Off = no race.
+  set {
+    name  = "enableServiceMutatorWebhook"
+    value = "false"
+  }
+
   depends_on = [
     aws_eks_pod_identity_association.lb_controller,
     var.node_groups_ready

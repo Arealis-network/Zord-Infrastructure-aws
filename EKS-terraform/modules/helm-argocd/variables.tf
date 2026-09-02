@@ -31,6 +31,12 @@ variable "chart_version" {
   default     = "10.4.1"
 }
 
+variable "apps_chart_version" {
+  description = "Pinned argocd-apps Helm chart version (creates the Application CRs after the main install)."
+  type        = string
+  default     = "2.0.2"
+}
+
 variable "github_username" {
   description = "GitHub username for ArgoCD repo access."
   type        = string

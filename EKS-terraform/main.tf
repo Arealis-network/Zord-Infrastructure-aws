@@ -571,14 +571,11 @@ resource "aws_resourcegroups_group" "zord" {
 }
 
 ############################
-# AWS COMPUTE OPTIMIZER (free, read-only right-sizing recommendations)
+# AWS COMPUTE OPTIMIZER — intentionally NOT managed here
 ############################
-# Analyzes CloudWatch metrics of EC2/EKS-node ASGs/EBS/RDS and recommends
-# right-sizing (over/under-provisioned). Free tier. Read-only — it never modifies
-# resources, only surfaces recommendations. NOTE: enrollment is ACCOUNT-WIDE (not
-# per-project); it enables analysis for the whole account. Filter its findings by
-# the Project tag in the Console. Needs ~14 days of metrics before results appear.
-
-resource "aws_computeoptimizer_enrollment_status" "this" {
-  status = "Active"
-}
+# This is a SHARED account (multiple teams, 10+ apps). Compute Optimizer is an
+# ACCOUNT-WIDE on/off setting — not per-project. If this project's Terraform
+# enrolled it, a `terraform destroy` here would turn it OFF for the WHOLE account,
+# breaking right-sizing for every other team's apps. So we deliberately do NOT
+# manage it. The account/platform admin enables it once at the account level;
+# our resources are covered automatically (filter findings by the Project tag).

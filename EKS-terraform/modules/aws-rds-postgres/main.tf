@@ -28,7 +28,7 @@ locals {
 resource "aws_db_parameter_group" "this" {
   name        = "${var.eks_resource_prefix}-pg16-tls"
   family      = "postgres${var.engine_version}"
-  description = "Zord Postgres params — force SSL/TLS on all connections"
+  description = "Zord Postgres params - force SSL/TLS on all connections"
 
   parameter {
     name         = "rds.force_ssl"
