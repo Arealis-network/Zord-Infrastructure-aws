@@ -97,7 +97,7 @@ resource "aws_wafv2_web_acl" "edge" {
   provider = aws.us_east_1
 
   name        = "${local.name_prefix}-edge-waf"
-  description = "Edge WAF for CloudFront (${var.environment})"
+  description = "Edge WAF for CloudFront ${var.environment}"
   scope       = "CLOUDFRONT"
 
   default_action {
@@ -299,7 +299,7 @@ resource "aws_cloudfront_distribution" "edge" {
   count = local.enabled ? 1 : 0
 
   enabled         = true
-  comment         = "${local.name_prefix} edge (Internet -> CloudFront -> shared ALB -> Kong)"
+  comment         = "${local.name_prefix} edge Internet to CloudFront to shared ALB to Kong"
   aliases         = [local.fqdn]
   is_ipv6_enabled = true
   web_acl_id      = aws_wafv2_web_acl.edge[0].arn
