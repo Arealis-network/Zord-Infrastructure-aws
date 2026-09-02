@@ -66,9 +66,12 @@ resource "helm_release" "argocd" {
         ingressClassName = "alb"
         hostname         = "argocd.${var.domain}"
         annotations = {
-          "alb.ingress.kubernetes.io/group.name"           = var.shared_alb_group
-          "alb.ingress.kubernetes.io/scheme"               = "internet-facing"
-          "alb.ingress.kubernetes.io/target-type"          = "ip"
+          "alb.ingress.kubernetes.io/group.name"  = var.shared_alb_group
+          "alb.ingress.kubernetes.io/scheme"      = "internet-facing"
+          "alb.ingress.kubernetes.io/target-type" = "ip"
+          # HTTPS with an EXPLICIT cert. Not hardcoded — var.acm_certificate_arn is
+          # auto-fetched from AWS by the Terraform data source (always the current
+          # ISSUED *.zordnet.com cert), so it is explicit AND drift-free.
           "alb.ingress.kubernetes.io/certificate-arn"      = var.acm_certificate_arn
           "alb.ingress.kubernetes.io/listen-ports"         = "[{\"HTTPS\":443}]"
           "alb.ingress.kubernetes.io/backend-protocol"     = "HTTP"
