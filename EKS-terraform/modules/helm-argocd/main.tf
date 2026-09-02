@@ -66,19 +66,30 @@ resource "helm_release" "argocd" {
         ingressClassName = "alb"
         hostname         = "argocd.${var.domain}"
         annotations = {
-          "alb.ingress.kubernetes.io/group.name"           = var.shared_alb_group
-          "alb.ingress.kubernetes.io/scheme"               = "internet-facing"
-          "alb.ingress.kubernetes.io/target-type"          = "ip"
-          "alb.ingress.kubernetes.io/certificate-arn"      = var.acm_certificate_arn
-          "alb.ingress.kubernetes.io/listen-ports"         = "[{\"HTTPS\":443}]"
-          "alb.ingress.kubernetes.io/backend-protocol"     = "HTTPS"
-          "alb.ingress.kubernetes.io/healthcheck-protocol" = "HTTPS"
-          "alb.ingress.kubernetes.io/healthcheck-path"     = "/healthz"
+          "alb.ingress.kubernetes.io/group.name"      = var.shared_alb_group
+          "alb.ingress.kubernetes.io/scheme"          = "internet-facing"
+          "alb.ingress.kubernetes.io/target-type"     = "ip"
+          "alb.ingress.kubernetes.io/certificate-arn" = var.acm_certificate_arn
+          "alb.ingress.kubernetes.io/listen-ports"    = "[{\"HTTPS\":443}]"
+          # End-to-end TLS: ALB terminates public TLS (ACM) and RE-ENCRYPTS to the
+          # ArgoCD pod over HTTPS — no plaintext hop, even inside the VPC.
+          "alb.ingress.kubernetes.io/backend-protocol" = "HTTPS"
+          # ArgoCD's API is gRPC (HTTP/2). The ALB must speak HTTP/2 to the backend
+          # or the API/login request is terminated. This is the real fix for the
+          # "Request has been terminated" error — while staying fully HTTPS.
+          "alb.ingress.kubernetes.io/backend-protocol-version" = "GRPC"
+          "alb.ingress.kubernetes.io/healthcheck-protocol"     = "HTTPS"
+          "alb.ingress.kubernetes.io/healthcheck-path"         = "/healthz"
+          # Redirect any HTTP:80 to HTTPS:443 (no plaintext access at all).
+          "alb.ingress.kubernetes.io/ssl-redirect" = "443"
+          # Enforce modern TLS (TLS 1.2/1.3 only) on the public listener.
+          "alb.ingress.kubernetes.io/ssl-policy" = "ELBSecurityPolicy-TLS13-1-2-2021-06"
         }
         tls = true
       }
     }
     configs = {
+      # ArgoCD server keeps its own TLS ON (secure mode) — HTTPS end to end.
       secret = {
         argocdServerAdminPassword = bcrypt(random_password.argocd_admin.result)
       }
