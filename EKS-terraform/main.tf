@@ -265,6 +265,7 @@ module "ec2_admin" {
   public_subnet_id    = module.vpc.public_subnet_1_id
   security_group_id   = module.vpc.security_group_id
   ami_id              = data.aws_ssm_parameter.amazon_linux_2023_ami.value
+  account_id          = data.aws_caller_identity.current.account_id
 }
 
 ############################

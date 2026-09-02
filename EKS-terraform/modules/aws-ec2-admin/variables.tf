@@ -27,3 +27,8 @@ variable "ami_id" {
   description = "AMI ID for the EC2 instance."
   type        = string
 }
+
+variable "account_id" {
+  description = "AWS account ID (for scoping ECR repository ARNs)."
+  type        = string
+}

@@ -26,10 +26,38 @@ resource "aws_iam_role_policy_attachment" "ec2_eks_access" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-# SEC H1: ECR pull-only (was AmazonEC2ContainerRegistryFullAccess).
-resource "aws_iam_role_policy_attachment" "ec2_ecr_access" {
-  role       = aws_iam_role.ec2_admin_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+# Jenkins (on this bastion) BUILDS and PUSHES images to ECR, so it needs push
+# perms — not just pull. Scoped inline policy (least privilege): auth token
+# (must be Resource=* per AWS) + push/pull actions on this account's repos only.
+resource "aws_iam_role_policy" "ec2_ecr_push" {
+  name = "${var.eks_resource_prefix}-ec2-ecr-push"
+  role = aws_iam_role.ec2_admin_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:PutImage",
+          "ecr:CreateRepository",
+          "ecr:DescribeRepositories"
+        ]
+        Resource = "arn:aws:ecr:*:${var.account_id}:repository/*"
+      }
+    ]
+  })
 }
 
 # SEC H1: scoped S3 access to the zord-* buckets only (was AmazonS3FullAccess,
@@ -149,12 +177,14 @@ resource "aws_instance" "eks" {
   iam_instance_profile   = aws_iam_instance_profile.ec2_admin_profile.name
   vpc_security_group_ids = [var.security_group_id]
 
-  # SEC M1: enforce IMDSv2 (token required) + hop limit 1 to block SSRF-based
-  # credential theft from the instance metadata service.
+  # IMDSv2 required (token) — blocks SSRF credential theft. Hop limit = 2 because
+  # Jenkins runs in a Docker CONTAINER on this box; a container is one extra network
+  # hop from IMDS (169.254.169.254), so hop-limit 1 blocks it ("Unable to locate
+  # credentials"). 2 lets the container's AWS SDK reach IMDS to get ECR push creds.
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
-    http_put_response_hop_limit = 1
+    http_put_response_hop_limit = 2
   }
 
   root_block_device {
