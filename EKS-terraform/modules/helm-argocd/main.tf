@@ -69,10 +69,9 @@ resource "helm_release" "argocd" {
           "alb.ingress.kubernetes.io/group.name"  = var.shared_alb_group
           "alb.ingress.kubernetes.io/scheme"      = "internet-facing"
           "alb.ingress.kubernetes.io/target-type" = "ip"
-          # HTTPS with an EXPLICIT cert. Not hardcoded — var.acm_certificate_arn is
-          # auto-fetched from AWS by the Terraform data source (always the current
-          # ISSUED *.zordnet.com cert), so it is explicit AND drift-free.
-          "alb.ingress.kubernetes.io/certificate-arn"      = var.acm_certificate_arn
+          # Still HTTPS (listen-ports HTTPS:443). No certificate-arn needed — the AWS
+          # LB Controller auto-discovers the *.zordnet.com ACM cert by matching the
+          # ingress host (argocd.zordnet.com). No ARN anywhere, survives cert rotation.
           "alb.ingress.kubernetes.io/listen-ports"         = "[{\"HTTPS\":443}]"
           "alb.ingress.kubernetes.io/backend-protocol"     = "HTTP"
           "alb.ingress.kubernetes.io/healthcheck-protocol" = "HTTP"

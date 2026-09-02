@@ -18,11 +18,6 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "vpc_cidr" {
-  description = "VPC CIDR block. RDS allows inbound 5432 from within this CIDR (matches the app NetworkPolicy egress)."
-  type        = string
-}
-
 variable "private_subnet_ids" {
   description = "Private subnet IDs for the DB subnet group (RDS is not publicly reachable)."
   type        = list(string)

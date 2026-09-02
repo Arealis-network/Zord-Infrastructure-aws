@@ -327,7 +327,6 @@ module "rds_postgres" {
   eks_name_prefix           = local.eks_name_prefix
   eks_resource_prefix       = local.eks_resource_prefix
   vpc_id                    = module.vpc.vpc_id
-  vpc_cidr                  = local.vpc_cidr
   private_subnet_ids        = module.vpc.private_subnet_ids
   private_subnet_cidrs      = [local.private1_cidr, local.private2_cidr]
   cluster_security_group_id = module.eks.cluster_security_group_id
@@ -368,10 +367,11 @@ module "s3_access" {
 module "secrets_manager" {
   source = "./modules/aws-secrets-manager"
 
-  environment          = var.environment
-  s3_kms_key_arn       = module.kms.s3_kms_key_arn
-  acm_certificate_arn  = data.aws_acm_certificate.wildcard.arn
-  evidence_kms_key_arn = module.kms_evidence_archive.kms_key_arn
+  environment               = var.environment
+  s3_kms_key_arn            = module.kms.s3_kms_key_arn
+  acm_certificate_arn       = data.aws_acm_certificate.wildcard.arn
+  evidence_kms_key_arn      = module.kms_evidence_archive.kms_key_arn
+  token_enclave_kms_key_arn = module.kms_token_enclave.kms_key_arn
 }
 
 ############################

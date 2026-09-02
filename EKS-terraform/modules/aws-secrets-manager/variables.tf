@@ -22,4 +22,9 @@ variable "evidence_kms_key_arn" {
   type        = string
 }
 
+variable "token_enclave_kms_key_arn" {
+  description = "KMS key ARN for the token-enclave CMK (auto-populated from the token-enclave KMS module). Delivered to the token-enclave service via shared-infra so nothing is hardcoded."
+  type        = string
+}
+
 
