@@ -43,18 +43,33 @@ provider "aws" {
   }
 }
 
+# Both providers authenticate via the AWS CLI exec plugin (aws eks get-token),
+# NOT a static data-source token. A static token expires ~15 min after plan starts;
+# on a long apply (cluster + nodes + RDS first) it's dead by the time Helm runs,
+# causing "cluster unreachable: server asked for credentials". The exec plugin
+# fetches a FRESH token on every API call, so it never expires mid-apply.
 provider "helm" {
   kubernetes {
     host                   = module.eks.cluster_endpoint
     cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
-    token                  = data.aws_eks_cluster_auth.this.token
+
+    exec {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "aws"
+      args        = ["eks", "get-token", "--cluster-name", local.cluster_name, "--region", var.aws_region]
+    }
   }
 }
 
 provider "kubernetes" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
-  token                  = data.aws_eks_cluster_auth.this.token
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", local.cluster_name, "--region", var.aws_region]
+  }
 }
 
 data "aws_caller_identity" "current" {}
