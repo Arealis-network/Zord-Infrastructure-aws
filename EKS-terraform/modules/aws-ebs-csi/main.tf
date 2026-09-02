@@ -65,3 +65,28 @@ resource "aws_eks_addon" "ebs_csi" {
     aws_eks_pod_identity_association.ebs_csi
   ]
 }
+
+# ─────────────────────────────────────────
+# gp3 StorageClass — EKS ships only gp2 by default. Workloads that request
+# storageClassName: gp3 (e.g. Prometheus in kube-prometheus-stack) get stuck
+# Pending PVCs without this. NOT marked default (EKS gp2 stays the default —
+# avoids the "two default StorageClasses" conflict); workloads ask for gp3 by name.
+# ─────────────────────────────────────────
+
+resource "kubernetes_storage_class" "gp3" {
+  metadata {
+    name = "gp3"
+  }
+
+  storage_provisioner    = "ebs.csi.aws.com"
+  volume_binding_mode    = "WaitForFirstConsumer"
+  allow_volume_expansion = true
+  reclaim_policy         = "Delete"
+
+  parameters = {
+    type      = "gp3"
+    encrypted = "true"
+  }
+
+  depends_on = [aws_eks_addon.ebs_csi]
+}
