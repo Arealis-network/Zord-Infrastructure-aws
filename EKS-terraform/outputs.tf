@@ -172,6 +172,27 @@ output "acm_certificate_arn" {
   value       = data.aws_acm_certificate.wildcard.arn
 }
 
+# Explicitly-named alias requested by the app/K8s team so ingress values reference
+# ONE known infra output instead of hardcoding the cert ARN (avoids drift on rotation).
+output "wildcard_acm_certificate_arn" {
+  description = "Wildcard (*.zordnet.com) ACM cert ARN for app ingress annotations. Use this in Grafana/Kong/observability ingresses instead of hardcoding."
+  value       = data.aws_acm_certificate.wildcard.arn
+}
+
+############################
+# shared ALB group names (for app-team ingress annotations)
+############################
+
+output "shared_alb_group_api" {
+  description = "ALB ingress group.name for public APIs (Kong). Set alb.ingress.kubernetes.io/group.name to this."
+  value       = var.kong_alb_stack_tag
+}
+
+output "shared_alb_group_observability" {
+  description = "ALB ingress group.name for dashboards (Grafana, ArgoCD UI, Kibana). Set alb.ingress.kubernetes.io/group.name to this."
+  value       = var.argocd_alb_group
+}
+
 ############################
 # token enclave output
 ############################
