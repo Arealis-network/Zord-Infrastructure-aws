@@ -95,6 +95,117 @@ resource "helm_release" "argocd" {
         argocdServerAdminPassword = bcrypt(random_password.argocd_admin.result)
       }
     }
+
+    # ─────────────────────────────────────────
+    # ArgoCD Application CRs created BY the Helm chart (extraObjects) — so they
+    # appear automatically on terraform apply, right after the Application CRD is
+    # installed (no provider CRD-race, no manual kubectl). You just click Sync.
+    # zord-platform = MANUAL sync (controlled bring-up). monitoring = AUTO sync.
+    # ─────────────────────────────────────────
+    extraObjects = [
+      {
+        apiVersion = "argoproj.io/v1alpha1"
+        kind       = "Application"
+        metadata = {
+          name       = "zord-platform"
+          namespace  = "argocd"
+          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        }
+        spec = {
+          project = "default"
+          source = {
+            repoURL        = var.app_repo_url
+            targetRevision = "main"
+            path           = "kubernetes/eks"
+          }
+          destination = {
+            server    = "https://kubernetes.default.svc"
+            namespace = "zord"
+          }
+          syncPolicy = {
+            # MANUAL — no automated block. You click Sync for the first bring-up.
+            syncOptions = [
+              "CreateNamespace=true",
+              "PrunePropagationPolicy=foreground",
+              "PruneLast=true",
+              "ApplyOutOfSyncOnly=true",
+            ]
+            retry = {
+              limit   = 3
+              backoff = { duration = "30s", factor = 2, maxDuration = "3m" }
+            }
+          }
+        }
+      },
+      {
+        apiVersion = "argoproj.io/v1alpha1"
+        kind       = "Application"
+        metadata = {
+          name       = "monitoring"
+          namespace  = "argocd"
+          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        }
+        spec = {
+          project = "default"
+          sources = [
+            {
+              repoURL        = "https://prometheus-community.github.io/helm-charts"
+              chart          = "kube-prometheus-stack"
+              targetRevision = "65.1.1"
+              helm = {
+                valuesObject = {
+                  grafana = {
+                    ingress = {
+                      enabled          = true
+                      ingressClassName = "alb"
+                      hosts            = ["grafana.${var.domain}"]
+                      annotations = {
+                        "alb.ingress.kubernetes.io/group.name"   = var.shared_alb_group
+                        "alb.ingress.kubernetes.io/scheme"       = "internet-facing"
+                        "alb.ingress.kubernetes.io/target-type"  = "ip"
+                        "alb.ingress.kubernetes.io/listen-ports" = "[{\"HTTPS\":443}]"
+                        "alb.ingress.kubernetes.io/ssl-redirect" = "443"
+                      }
+                    }
+                  }
+                  prometheus = {
+                    prometheusSpec = {
+                      retention                               = "15d"
+                      serviceMonitorSelectorNilUsesHelmValues = false
+                      storageSpec = {
+                        volumeClaimTemplate = {
+                          spec = {
+                            storageClassName = "gp3"
+                            accessModes      = ["ReadWriteOnce"]
+                            resources        = { requests = { storage = "20Gi" } }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              repoURL        = var.app_repo_url
+              targetRevision = "main"
+              path           = "kubernetes/monitoring"
+            },
+          ]
+          destination = {
+            server    = "https://kubernetes.default.svc"
+            namespace = "monitoring"
+          }
+          syncPolicy = {
+            automated = { prune = true, selfHeal = true }
+            syncOptions = [
+              "CreateNamespace=true",
+              "ServerSideApply=true",
+            ]
+          }
+        }
+      },
+    ]
   })]
 
   depends_on = [var.node_groups_ready]

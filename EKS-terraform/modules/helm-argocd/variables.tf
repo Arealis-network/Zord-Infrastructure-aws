@@ -37,6 +37,12 @@ variable "github_username" {
   default     = "Arealis-network"
 }
 
+variable "app_repo_url" {
+  description = "Git URL of the app repo ArgoCD deploys from (holds kubernetes/eks + kubernetes/monitoring)."
+  type        = string
+  default     = "https://github.com/Arealis-network/Arealis-Zord-intent.git"
+}
+
 variable "github_pat" {
   description = "GitHub Personal Access Token for ArgoCD repo access."
   type        = string
