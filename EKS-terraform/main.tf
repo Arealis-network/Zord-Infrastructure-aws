@@ -546,8 +546,8 @@ module "cloudfront_waf" {
 # audits, and bulk ops. Free.
 
 resource "aws_resourcegroups_group" "zord" {
-  name        = "Arealis zordnet ${local.env_short}"
-  description = "Arealis Zordnet (${var.environment}) — all project resources, single-pane-of-glass."
+  name        = "arealis-zordnet-${local.env_short}"
+  description = "Arealis Zordnet ${var.environment} all project resources single-pane-of-glass"
 
   resource_query {
     query = jsonencode({
