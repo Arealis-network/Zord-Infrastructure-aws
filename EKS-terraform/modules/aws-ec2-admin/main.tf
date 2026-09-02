@@ -75,6 +75,8 @@ resource "aws_iam_role_policy" "ec2_eks_describe" {
         Action = [
           "eks:DescribeCluster",
           "eks:ListClusters",
+          "eks:ListAddons",
+          "eks:DescribeAddon",
           "eks:AccessKubernetesApi"
         ]
         Resource = "*"
@@ -83,6 +85,17 @@ resource "aws_iam_role_policy" "ec2_eks_describe" {
         Effect   = "Allow"
         Action   = ["sts:GetCallerIdentity"]
         Resource = "*"
+      },
+      # Read-only access to THIS project's secrets so the bastion can fetch
+      # ArgoCD/observability credentials. Scoped to production/zord/* only.
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:ListSecrets"
+        ]
+        Resource = ["arn:aws:secretsmanager:*:*:secret:production/zord/*"]
       }
     ]
   })
