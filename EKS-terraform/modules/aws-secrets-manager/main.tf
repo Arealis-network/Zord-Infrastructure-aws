@@ -5,6 +5,108 @@
 # lifecycle ignore_changes ensures Terraform never overwrites manual edits
 # ═══════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════
+# AUTO-GENERATED SECRET VALUES (no CHANGE_ME, no hardcoding)
+# Random strings generated once by Terraform and frozen. Shared values are
+# generated ONCE and replicated to every consumer's secret so they always match.
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Per-service vault keys (each service its own) ──
+resource "random_password" "edge_vault_key" {
+  length  = 32
+  special = false
+}
+resource "random_password" "intent_vault_key" {
+  length  = 32
+  special = false
+}
+resource "random_password" "outcome_vault_key" {
+  length  = 32
+  special = false
+}
+
+# ── Per-service unique secrets ──
+resource "random_password" "edge_vault_key_id" {
+  length  = 20
+  special = false
+}
+resource "random_password" "edge_internal_admin_key" {
+  length  = 32
+  special = false
+}
+resource "random_password" "token_master_key" {
+  length  = 32
+  special = false
+}
+resource "random_password" "token_secret" {
+  length  = 32
+  special = false
+}
+resource "random_password" "token_enclave_internal_token" {
+  length  = 32
+  special = false
+}
+resource "random_password" "tokenized_data_hash_master_secret" {
+  length  = 32
+  special = false
+}
+
+# ── SHARED auth secrets (generated ONCE, same value in all consumers) ──
+resource "random_password" "jwt_signing_secret" { # edge signs; kong/intelligence/outcome/console verify
+  length  = 48
+  special = false
+}
+resource "random_password" "service_jwt_signing_secret" { # intent signs; token-enclave verifies
+  length  = 48
+  special = false
+}
+resource "random_password" "relay_slot_0_token" { # relay <-> intent
+  length  = 32
+  special = false
+}
+resource "random_password" "relay_slot_1_token" { # relay <-> edge
+  length  = 32
+  special = false
+}
+resource "random_password" "relay_slot_2_token" { # relay <-> outcome
+  length  = 32
+  special = false
+}
+
+# ── Kafka SCRAM: per-service users + admin (SASL_PLAINTEXT / SCRAM-SHA-512) ──
+resource "random_password" "kafka_admin" {
+  length  = 28
+  special = false
+}
+resource "random_password" "kafka_edge" {
+  length  = 28
+  special = false
+}
+resource "random_password" "kafka_intent" {
+  length  = 28
+  special = false
+}
+resource "random_password" "kafka_outcome" {
+  length  = 28
+  special = false
+}
+resource "random_password" "kafka_evidence" {
+  length  = 28
+  special = false
+}
+resource "random_password" "kafka_intelligence" {
+  length  = 28
+  special = false
+}
+resource "random_password" "kafka_relay" {
+  length  = 28
+  special = false
+}
+resource "random_password" "kafka_ml" {
+  length  = 28
+  special = false
+}
+
 # ─────────────────────────────────────────
 # Shared Infrastructure Config (DB host, Kafka, etc.)
 # Used by all services that need infra connection strings
@@ -28,6 +130,52 @@ resource "aws_secretsmanager_secret_version" "shared_infra" {
     ACM_CERTIFICATE_ARN       = var.acm_certificate_arn
     EVIDENCE_KMS_KEY_ARN      = var.evidence_kms_key_arn
     TOKEN_ENCLAVE_KMS_KEY_ARN = var.token_enclave_kms_key_arn
+
+    # SHARED auth secrets — one value, every consumer reads the SAME one (must match).
+    JWT_SIGNING_SECRET         = random_password.jwt_signing_secret.result         # edge signs; kong/intelligence/outcome/console verify
+    SERVICE_JWT_SIGNING_SECRET = random_password.service_jwt_signing_secret.result # intent signs; token-enclave verifies
+    RELAY_SLOT_0_TOKEN         = random_password.relay_slot_0_token.result         # relay <-> intent
+    RELAY_SLOT_1_TOKEN         = random_password.relay_slot_1_token.result         # relay <-> edge
+    RELAY_SLOT_2_TOKEN         = random_password.relay_slot_2_token.result         # relay <-> outcome
+  })
+}
+
+# ─────────────────────────────────────────
+# Kafka SCRAM credentials (SHARED) — the scram-users-job provisions these users,
+# and each service authenticates with its own user/password. ONE source of truth
+# so the job and the services always agree. SASL_PLAINTEXT + SCRAM-SHA-512.
+# ─────────────────────────────────────────
+
+resource "aws_secretsmanager_secret" "kafka" {
+  name                    = "${var.environment}/zord/kafka-secrets"
+  description             = "Kafka SCRAM users (admin + per-service) — auto-generated"
+  recovery_window_in_days = 0
+  tags                    = { Name = "${var.environment}/zord/kafka-secrets" }
+}
+
+resource "aws_secretsmanager_secret_version" "kafka" {
+  secret_id = aws_secretsmanager_secret.kafka.id
+  secret_string = jsonencode({
+    # admin (Kafka super user) + broker JAAS used by the statefulset
+    KAFKA_ADMIN_USERNAME     = "admin"
+    KAFKA_ADMIN_PASSWORD     = random_password.kafka_admin.result
+    KAFKA_BROKER_JAAS_CONFIG = "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"admin\" password=\"${random_password.kafka_admin.result}\";"
+
+    # per-service SCRAM users (username fixed, password auto-gen)
+    KAFKA_EDGE_USERNAME         = "edge-service"
+    KAFKA_EDGE_PASSWORD         = random_password.kafka_edge.result
+    KAFKA_INTENT_USERNAME       = "intent-service"
+    KAFKA_INTENT_PASSWORD       = random_password.kafka_intent.result
+    KAFKA_OUTCOME_USERNAME      = "outcome-service"
+    KAFKA_OUTCOME_PASSWORD      = random_password.kafka_outcome.result
+    KAFKA_EVIDENCE_USERNAME     = "evidence-service"
+    KAFKA_EVIDENCE_PASSWORD     = random_password.kafka_evidence.result
+    KAFKA_INTELLIGENCE_USERNAME = "intelligence-service"
+    KAFKA_INTELLIGENCE_PASSWORD = random_password.kafka_intelligence.result
+    KAFKA_RELAY_USERNAME        = "relay-service"
+    KAFKA_RELAY_PASSWORD        = random_password.kafka_relay.result
+    KAFKA_ML_USERNAME           = "ml-service"
+    KAFKA_ML_PASSWORD           = random_password.kafka_ml.result
   })
 }
 
@@ -48,14 +196,15 @@ resource "aws_secretsmanager_secret_version" "edge" {
   # single Terraform-owned secret production/zord/db-connection (RDS module).
   # Only non-DB, service-specific secrets live here (fill CHANGE_ME once).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY     = "CHANGE_ME"
-    VAULT_KEY_ID       = "CHANGE_ME"
-    INTERNAL_ADMIN_KEY = "CHANGE_ME"
+    ZORD_VAULT_KEY     = random_password.edge_vault_key.result
+    VAULT_KEY_ID       = random_password.edge_vault_key_id.result
+    INTERNAL_ADMIN_KEY = random_password.edge_internal_admin_key.result
     EDGE_S3_BUCKET     = "zord-edge-ingress"
-    JWT_SIGNING_SECRET = "CHANGE_ME"
-    RELAY_AUTH_TOKEN   = "CHANGE_ME"
+    JWT_SIGNING_SECRET = random_password.jwt_signing_secret.result # shared (edge signs)
+    RELAY_AUTH_TOKEN   = random_password.relay_slot_1_token.result # edge = relay slot 1
+    KAFKA_USERNAME     = "edge-service"
+    KAFKA_PASSWORD     = random_password.kafka_edge.result
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
@@ -73,14 +222,15 @@ resource "aws_secretsmanager_secret_version" "intent" {
   secret_id = aws_secretsmanager_secret.intent.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY              = "CHANGE_ME"
+    ZORD_VAULT_KEY              = random_password.intent_vault_key.result
     CANNONICALS3_BUCKET         = "zord-intent-engine-canonical"
     NIRS3_BUCKET                = "zord-intent-engine-nir"
     GOVERNANCES3_BUCKET         = "zord-intent-engine-governance"
-    SERVICE_JWT_SIGNING_SECRET  = "CHANGE_ME"
-    RELAY_SERVICES_0_AUTH_TOKEN = "CHANGE_ME"
+    SERVICE_JWT_SIGNING_SECRET  = random_password.service_jwt_signing_secret.result # shared (intent signs)
+    RELAY_SERVICES_0_AUTH_TOKEN = random_password.relay_slot_0_token.result         # intent = relay slot 0
+    KAFKA_USERNAME              = "intent-service"
+    KAFKA_PASSWORD              = random_password.kafka_intent.result
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
@@ -99,13 +249,13 @@ resource "aws_secretsmanager_secret_version" "token_enclave" {
   # DB connectivity comes from production/zord/db-connection (RDS module).
   # KMS_KEY_ID is auto-populated by the token-enclave KMS module (not here).
   secret_string = jsonencode({
-    MASTER_KEY                        = "CHANGE_ME"
-    TOKEN_SECRET                      = "CHANGE_ME"
-    ENCLAVE_INTERNAL_TOKEN            = "CHANGE_ME"
-    TOKENIZED_DATA_HASH_MASTER_SECRET = "CHANGE_ME"
-    KMS_KEY_ID                        = "CHANGE_ME"
+    MASTER_KEY                        = random_password.token_master_key.result
+    TOKEN_SECRET                      = random_password.token_secret.result
+    ENCLAVE_INTERNAL_TOKEN            = random_password.token_enclave_internal_token.result
+    TOKENIZED_DATA_HASH_MASTER_SECRET = random_password.tokenized_data_hash_master_secret.result
+    SERVICE_JWT_SIGNING_SECRET        = random_password.service_jwt_signing_secret.result # shared (token-enclave verifies intent's JWT)
+    KMS_KEY_ID                        = var.token_enclave_kms_key_arn                     # live current-account ARN
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
@@ -123,11 +273,12 @@ resource "aws_secretsmanager_secret_version" "relay" {
   secret_id = aws_secretsmanager_secret.relay.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    RELAY_SERVICES_0_AUTH_TOKEN = "CHANGE_ME"
-    RELAY_SERVICES_1_AUTH_TOKEN = "CHANGE_ME"
-    RELAY_SERVICES_2_AUTH_TOKEN = "CHANGE_ME"
+    RELAY_SERVICES_0_AUTH_TOKEN = random_password.relay_slot_0_token.result # matches intent
+    RELAY_SERVICES_1_AUTH_TOKEN = random_password.relay_slot_1_token.result # matches edge
+    RELAY_SERVICES_2_AUTH_TOKEN = random_password.relay_slot_2_token.result # matches outcome
+    KAFKA_USERNAME              = "relay-service"
+    KAFKA_PASSWORD              = random_password.kafka_relay.result
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
@@ -145,10 +296,13 @@ resource "aws_secretsmanager_secret_version" "outcome" {
   secret_id = aws_secretsmanager_secret.outcome.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY    = "CHANGE_ME"
-    OUTCOME_S3_BUCKET = "zord-outcome-engine-settlement-ingress"
+    ZORD_VAULT_KEY     = random_password.outcome_vault_key.result
+    OUTCOME_S3_BUCKET  = "zord-outcome-engine-settlement-ingress"
+    JWT_SIGNING_SECRET = random_password.jwt_signing_secret.result # shared (outcome verifies)
+    RELAY_AUTH_TOKEN   = random_password.relay_slot_2_token.result # outcome = relay slot 2
+    KAFKA_USERNAME     = "outcome-service"
+    KAFKA_PASSWORD     = random_password.kafka_outcome.result
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
@@ -169,8 +323,9 @@ resource "aws_secretsmanager_secret_version" "evidence" {
     EVIDENCE_S3_BUCKET                  = "zord-evidence-vault"
     EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 = ""
     EVIDENCE_KMS_KEY_ARN                = var.evidence_kms_key_arn
+    KAFKA_USERNAME                      = "evidence-service"
+    KAFKA_PASSWORD                      = random_password.kafka_evidence.result
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
@@ -190,9 +345,10 @@ resource "aws_secretsmanager_secret_version" "intelligence" {
   # This service currently has no non-DB secrets; kept as an empty placeholder
   # so the container exists (add keys here later if needed).
   secret_string = jsonencode({
-    PLACEHOLDER = "unused"
+    JWT_SIGNING_SECRET = random_password.jwt_signing_secret.result # shared (intelligence verifies)
+    KAFKA_USERNAME     = "intelligence-service"
+    KAFKA_PASSWORD     = random_password.kafka_intelligence.result
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
@@ -228,9 +384,9 @@ resource "aws_secretsmanager_secret" "console" {
 resource "aws_secretsmanager_secret_version" "console" {
   secret_id = aws_secretsmanager_secret.console.id
   secret_string = jsonencode({
-    JWT_SIGNING_SECRET        = "CHANGE_ME"
-    SLACK_LEADS_WEBHOOK_URL   = "CHANGE_ME"
-    SLACK_SUPPORT_WEBHOOK_URL = "CHANGE_ME"
+    JWT_SIGNING_SECRET        = random_password.jwt_signing_secret.result # shared (console verifies)
+    SLACK_LEADS_WEBHOOK_URL   = "CHANGE_ME"                               # real webhook — human-provided
+    SLACK_SUPPORT_WEBHOOK_URL = "CHANGE_ME"                               # real webhook — human-provided
   })
   lifecycle { ignore_changes = [secret_string] }
 }
