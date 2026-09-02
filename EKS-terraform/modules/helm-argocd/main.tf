@@ -201,6 +201,9 @@ resource "helm_release" "argocd_apps" {
                     enabled          = true
                     ingressClassName = "alb"
                     hosts            = ["grafana.${var.domain}"]
+                    # Dashboards go on the observability ALB group (this module's
+                    # shared_alb_group is already zord-observability - root passes it).
+                    # No certificate-arn: LB Controller auto-discovers the wildcard cert.
                     annotations = {
                       "alb.ingress.kubernetes.io/group.name"   = var.shared_alb_group
                       "alb.ingress.kubernetes.io/scheme"       = "internet-facing"
