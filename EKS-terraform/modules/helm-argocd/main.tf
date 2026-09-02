@@ -205,6 +205,94 @@ resource "helm_release" "argocd" {
           }
         }
       },
+      {
+        apiVersion = "argoproj.io/v1alpha1"
+        kind       = "Application"
+        metadata = {
+          name       = "kong-api-gateway"
+          namespace  = "argocd"
+          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        }
+        spec = {
+          project = "default"
+          source = {
+            repoURL        = var.app_repo_url
+            targetRevision = "main"
+            path           = "kubernetes/api-gateway"
+          }
+          destination = {
+            server    = "https://kubernetes.default.svc"
+            namespace = "api-gateway"
+          }
+          syncPolicy = {
+            # MANUAL for first bring-up (flip to automated later).
+            syncOptions = [
+              "CreateNamespace=true",
+              "PrunePropagationPolicy=foreground",
+              "ApplyOutOfSyncOnly=true",
+            ]
+          }
+          ignoreDifferences = [
+            { group = "apps", kind = "Deployment", jsonPointers = ["/spec/replicas"] },
+          ]
+        }
+      },
+      {
+        apiVersion = "argoproj.io/v1alpha1"
+        kind       = "Application"
+        metadata = {
+          name       = "logging"
+          namespace  = "argocd"
+          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        }
+        spec = {
+          project = "default"
+          source = {
+            repoURL        = var.app_repo_url
+            targetRevision = "main"
+            path           = "kubernetes/logging"
+          }
+          destination = {
+            server    = "https://kubernetes.default.svc"
+            namespace = "logging"
+          }
+          syncPolicy = {
+            syncOptions = [
+              "CreateNamespace=true",
+              "PrunePropagationPolicy=foreground",
+              "ApplyOutOfSyncOnly=true",
+            ]
+          }
+        }
+      },
+      {
+        apiVersion = "argoproj.io/v1alpha1"
+        kind       = "Application"
+        metadata = {
+          name       = "tracing"
+          namespace  = "argocd"
+          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+        }
+        spec = {
+          project = "default"
+          source = {
+            repoURL        = var.app_repo_url
+            targetRevision = "main"
+            path           = "kubernetes/tracing"
+          }
+          destination = {
+            server    = "https://kubernetes.default.svc"
+            namespace = "tracing"
+          }
+          syncPolicy = {
+            syncOptions = [
+              "CreateNamespace=true",
+              "PrunePropagationPolicy=foreground",
+              "ApplyOutOfSyncOnly=true",
+            ]
+          }
+        }
+      },
     ]
   })]
 
