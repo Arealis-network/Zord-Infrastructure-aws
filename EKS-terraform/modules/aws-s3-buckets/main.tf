@@ -78,3 +78,35 @@ resource "aws_s3_bucket_versioning" "this" {
     status = "Enabled"
   }
 }
+
+# ─────────────────────────────────────────
+# TLS-only bucket policy (SEC H5) — deny any request not using HTTPS.
+# PCI-DSS/SOC2: data in transit must be encrypted.
+# ─────────────────────────────────────────
+
+resource "aws_s3_bucket_policy" "tls_only" {
+  for_each = local.buckets
+
+  bucket = aws_s3_bucket.this[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        aws_s3_bucket.this[each.key].arn,
+        "${aws_s3_bucket.this[each.key].arn}/*"
+      ]
+      Condition = {
+        Bool = {
+          "aws:SecureTransport" = "false"
+        }
+      }
+    }]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.this]
+}

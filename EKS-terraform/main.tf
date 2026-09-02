@@ -329,6 +329,7 @@ module "rds_postgres" {
   vpc_id                    = module.vpc.vpc_id
   vpc_cidr                  = local.vpc_cidr
   private_subnet_ids        = module.vpc.private_subnet_ids
+  private_subnet_cidrs      = [local.private1_cidr, local.private2_cidr]
   cluster_security_group_id = module.eks.cluster_security_group_id
   kms_key_arn               = module.kms.s3_kms_key_arn
 

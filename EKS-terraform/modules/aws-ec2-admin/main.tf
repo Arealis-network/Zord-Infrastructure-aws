@@ -26,14 +26,41 @@ resource "aws_iam_role_policy_attachment" "ec2_eks_access" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
+# SEC H1: ECR pull-only (was AmazonEC2ContainerRegistryFullAccess).
 resource "aws_iam_role_policy_attachment" "ec2_ecr_access" {
   role       = aws_iam_role.ec2_admin_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-resource "aws_iam_role_policy_attachment" "ec2_s3_access" {
-  role       = aws_iam_role.ec2_admin_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+# SEC H1: scoped S3 access to the zord-* buckets only (was AmazonS3FullAccess,
+# which granted read/write/delete on EVERY bucket in the account).
+resource "aws_iam_role_policy" "ec2_s3_scoped" {
+  name = "${var.eks_resource_prefix}-ec2-s3-scoped"
+  role = aws_iam_role.ec2_admin_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListAllMyBuckets"]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::zord-*",
+          "arn:aws:s3:::zord-*/*"
+        ]
+      }
+    ]
+  })
 }
 
 resource "aws_iam_role_policy" "ec2_eks_describe" {
@@ -109,8 +136,17 @@ resource "aws_instance" "eks" {
   iam_instance_profile   = aws_iam_instance_profile.ec2_admin_profile.name
   vpc_security_group_ids = [var.security_group_id]
 
+  # SEC M1: enforce IMDSv2 (token required) + hop limit 1 to block SSRF-based
+  # credential theft from the instance metadata service.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
   root_block_device {
     volume_size = "60"
+    encrypted   = true
   }
 
   tags = {

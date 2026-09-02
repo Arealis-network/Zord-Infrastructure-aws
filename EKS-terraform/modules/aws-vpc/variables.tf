@@ -47,3 +47,21 @@ variable "aws_region" {
   description = "AWS region for VPC endpoint service names."
   type        = string
 }
+
+variable "admin_cidrs" {
+  description = "CIDRs allowed to reach the bastion SSH(22)/Jenkins(7777)/SonarQube(7771). Default 0.0.0.0/0 for first bring-up; LOCK to your office/VPN CIDRs for production. Prefer SSM Session Manager over SSH."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "enable_flow_logs" {
+  description = "Enable VPC Flow Logs to CloudWatch (SEC H4 — network audit trail)."
+  type        = bool
+  default     = true
+}
+
+variable "flow_log_retention_days" {
+  description = "CloudWatch retention (days) for VPC Flow Logs."
+  type        = number
+  default     = 90
+}

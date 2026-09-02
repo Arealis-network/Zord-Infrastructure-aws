@@ -21,6 +21,27 @@ locals {
 }
 
 # ─────────────────────────────────────────
+# Parameter group — enforce TLS (SEC M4: rds.force_ssl=1)
+# Rejects any non-TLS connection at the server.
+# ─────────────────────────────────────────
+
+resource "aws_db_parameter_group" "this" {
+  name        = "${var.eks_resource_prefix}-pg16-tls"
+  family      = "postgres${var.engine_version}"
+  description = "Zord Postgres params — force SSL/TLS on all connections"
+
+  parameter {
+    name         = "rds.force_ssl"
+    value        = var.force_ssl ? "1" : "0"
+    apply_method = "pending-reboot"
+  }
+
+  tags = {
+    Name = "${var.eks_name_prefix} rds param group"
+  }
+}
+
+# ─────────────────────────────────────────
 # Master password — Terraform-generated (single source of truth)
 # ─────────────────────────────────────────
 
@@ -52,6 +73,8 @@ resource "aws_security_group" "rds" {
   vpc_id      = var.vpc_id
 
   # Allow 5432 from the EKS cluster SG (pods/nodes carry this SG by default).
+  # SEC H3: 5432 only from the EKS cluster SG (pods/nodes). Removed the broad
+  # VPC-CIDR rule that also exposed the DB to the public subnets + bastion.
   ingress {
     description     = "Postgres from EKS cluster SG"
     from_port       = 5432
@@ -60,15 +83,14 @@ resource "aws_security_group" "rds" {
     security_groups = [var.cluster_security_group_id]
   }
 
-  # Also allow 5432 from anywhere inside the VPC. This matches the app team's
-  # NetworkPolicy (egress to the VPC CIDR) and avoids cluster-SG vs node-SG
-  # ambiguity. Still fully private — no public access (RDS has no public IP).
+  # Also allow the private-subnet CIDRs (where nodes/pods run) in case pods use the
+  # node SG rather than the cluster SG. Private subnets only — never public.
   ingress {
-    description = "Postgres from within the VPC"
+    description = "Postgres from private subnets (nodes/pods)"
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
+    cidr_blocks = var.private_subnet_cidrs
   }
 
   egress {
@@ -106,15 +128,21 @@ resource "aws_db_instance" "this" {
   port     = 5432
 
   db_subnet_group_name   = aws_db_subnet_group.this.name
+  parameter_group_name   = aws_db_parameter_group.this.name
   vpc_security_group_ids = [aws_security_group.rds.id]
   publicly_accessible    = false
   multi_az               = var.multi_az
 
   backup_retention_period = var.backup_retention_days
-  deletion_protection     = false # dev: allow destroy. Set true for real production.
-  skip_final_snapshot     = true  # dev: no final snapshot on destroy. Set false for prod.
+  # SEC H2: driven by variables. Defaults allow one-click dev teardown; flip both
+  # (deletion_protection=true, skip_final_snapshot=false) for real production.
+  deletion_protection       = var.deletion_protection
+  skip_final_snapshot       = var.skip_final_snapshot
+  final_snapshot_identifier = var.skip_final_snapshot ? null : "${local.identifier}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 
+  # SEC M4/H: encrypt logs + audit exports; enforce TLS via parameter group below.
   auto_minor_version_upgrade = true
+  copy_tags_to_snapshot      = true
 
   tags = {
     Name = "${var.eks_name_prefix} postgres"

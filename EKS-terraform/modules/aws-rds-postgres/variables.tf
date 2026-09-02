@@ -91,3 +91,26 @@ variable "storage_type" {
 }
 
 
+
+variable "private_subnet_cidrs" {
+  description = "Private subnet CIDRs allowed inbound on 5432 (nodes/pods). SEC H3 — replaces the broad VPC-CIDR rule so the DB is never reachable from public subnets/bastion."
+  type        = list(string)
+}
+
+variable "deletion_protection" {
+  description = "SEC H2 — protect the DB from accidental deletion. Default false for dev teardown; set true in production."
+  type        = bool
+  default     = false
+}
+
+variable "skip_final_snapshot" {
+  description = "SEC H2 — skip final snapshot on destroy. Default true for dev; set false in production so a snapshot is taken before deletion."
+  type        = bool
+  default     = true
+}
+
+variable "force_ssl" {
+  description = "SEC M4 — enforce TLS on all DB connections via rds.force_ssl parameter group."
+  type        = bool
+  default     = true
+}

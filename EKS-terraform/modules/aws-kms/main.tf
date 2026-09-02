@@ -7,7 +7,7 @@ resource "aws_kms_key" "s3" {
   description              = "Arealis Zord S3 encryption key (${var.environment})"
   key_usage                = "ENCRYPT_DECRYPT"
   customer_master_key_spec = "SYMMETRIC_DEFAULT"
-  deletion_window_in_days  = 30
+  deletion_window_in_days  = 7
   enable_key_rotation      = true
 
   policy = jsonencode({

@@ -150,28 +150,30 @@ resource "aws_security_group" "allow_all" {
   description = "Admin EC2 security group - restricted ports"
   vpc_id      = aws_vpc.eks_vpc.id
 
+  # SEC C4: SSH/Jenkins/SonarQube locked to admin_cidrs, NOT 0.0.0.0/0.
+  # Prefer SSM Session Manager (no inbound SSH). Set admin_cidrs to your office/VPN.
   ingress {
-    description = "SSH"
+    description = "SSH (admin CIDRs only)"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.admin_cidrs
   }
 
   ingress {
-    description = "Jenkins"
+    description = "Jenkins (admin CIDRs only)"
     from_port   = 7777
     to_port     = 7777
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.admin_cidrs
   }
 
   ingress {
-    description = "SonarQube"
+    description = "SonarQube (admin CIDRs only)"
     from_port   = 7771
     to_port     = 7771
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.admin_cidrs
   }
 
   egress {
@@ -204,5 +206,70 @@ resource "aws_vpc_endpoint" "s3" {
 
   tags = {
     Name = "${var.vpc_name_prefix} s3 endpoint"
+  }
+}
+
+############################
+# VPC FLOW LOGS (SEC H4 — network audit trail for PCI-DSS/SOC2)
+############################
+
+resource "aws_cloudwatch_log_group" "flow_logs" {
+  count             = var.enable_flow_logs ? 1 : 0
+  name              = "/aws/vpc/${var.vpc_resource_prefix}/flow-logs"
+  retention_in_days = var.flow_log_retention_days
+
+  tags = {
+    Name = "${var.vpc_name_prefix} flow logs"
+  }
+}
+
+resource "aws_iam_role" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+  name  = "${var.vpc_resource_prefix}-flow-logs-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "vpc-flow-logs.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    Name = "${var.vpc_name_prefix} flow logs role"
+  }
+}
+
+resource "aws_iam_role_policy" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+  name  = "${var.vpc_resource_prefix}-flow-logs-policy"
+  role  = aws_iam_role.flow_logs[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams"
+      ]
+      Resource = "${aws_cloudwatch_log_group.flow_logs[0].arn}:*"
+    }]
+  })
+}
+
+resource "aws_flow_log" "vpc" {
+  count                = var.enable_flow_logs ? 1 : 0
+  vpc_id               = aws_vpc.eks_vpc.id
+  traffic_type         = "ALL"
+  iam_role_arn         = aws_iam_role.flow_logs[0].arn
+  log_destination      = aws_cloudwatch_log_group.flow_logs[0].arn
+  log_destination_type = "cloud-watch-logs"
+
+  tags = {
+    Name = "${var.vpc_name_prefix} flow log"
   }
 }

@@ -60,6 +60,17 @@ resource "aws_launch_template" "stateful" {
     http_put_response_hop_limit = 2
   }
 
+  # SEC H6: encrypt node root EBS volume at rest.
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size           = 40
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
   tag_specifications {
     resource_type = "instance"
 
@@ -136,6 +147,17 @@ resource "aws_launch_template" "stateless" {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
     http_put_response_hop_limit = 2
+  }
+
+  # SEC H6: encrypt node root EBS volume at rest.
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size           = 40
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
   }
 
   tag_specifications {
