@@ -206,5 +206,9 @@ resource "aws_secretsmanager_secret_version" "db_connection" {
     # prompt-layer's own vector-index dedupe state DB (VECTOR_INDEX_STATE_DSN).
     PROMPTLAYER_DSN        = "postgres://${var.master_username}:${random_password.master.result}@${aws_db_instance.this.address}:5432/zord_prompt_layer_db?sslmode=require"
     VECTOR_INDEX_STATE_DSN = "postgres://${var.master_username}:${random_password.master.result}@${aws_db_instance.this.address}:5432/zord_prompt_layer_db?sslmode=require"
+
+    # postgres-exporter (monitoring) DSN — connects to the maintenance 'postgres'
+    # DB to scrape instance-wide metrics. Uses the master user (single-user model).
+    POSTGRES_EXPORTER_DSN = "postgres://${var.master_username}:${random_password.master.result}@${aws_db_instance.this.address}:5432/postgres?sslmode=require"
   })
 }

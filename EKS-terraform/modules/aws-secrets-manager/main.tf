@@ -85,6 +85,13 @@ resource "random_password" "relay_slot_2_token" { # relay <-> outcome
   special = false
 }
 
+# ── Evidence signing key — stable Ed25519, generated ONCE. Regenerating would
+#    make previously-signed evidence packs unverifiable, so this is created once
+#    and frozen (ignore_changes on the secret). Stored base64 in evidence-secrets.
+resource "tls_private_key" "evidence_signing" {
+  algorithm = "ED25519"
+}
+
 # ── Kafka SCRAM: per-service users + admin (SASL_PLAINTEXT / SCRAM-SHA-512) ──
 resource "random_password" "kafka_admin" {
   length  = 28
@@ -339,12 +346,15 @@ resource "aws_secretsmanager_secret_version" "evidence" {
   secret_id = aws_secretsmanager_secret.evidence.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    EVIDENCE_S3_BUCKET                  = "zord-evidence-vault"
-    EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 = ""
+    EVIDENCE_S3_BUCKET = "zord-evidence-vault"
+    # Stable Ed25519 signing key (base64 of the PEM), generated once by Terraform.
+    EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 = base64encode(tls_private_key.evidence_signing.private_key_pem)
     EVIDENCE_KMS_KEY_ARN                = var.evidence_kms_key_arn
     KAFKA_USERNAME                      = "evidence-service"
     KAFKA_PASSWORD                      = random_password.kafka_evidence.result
   })
+  # Freeze so the signing key is never regenerated (would break old-pack verification).
+  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
