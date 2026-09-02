@@ -51,6 +51,18 @@ resource "random_password" "tokenized_data_hash_master_secret" {
   special = false
 }
 
+# ── SHARED: internal service token (console signs -> intent verifies, must match) ──
+resource "random_password" "intent_engine_internal_service_token" {
+  length  = 40
+  special = false
+}
+
+# ── Kafka SCRAM user for token-enclave (consumes pii.tokenize.request/result) ──
+resource "random_password" "kafka_token" {
+  length  = 28
+  special = false
+}
+
 # ── SHARED auth secrets (generated ONCE, same value in all consumers) ──
 resource "random_password" "jwt_signing_secret" { # edge signs; kong/intelligence/outcome/console verify
   length  = 48
@@ -176,6 +188,8 @@ resource "aws_secretsmanager_secret_version" "kafka" {
     KAFKA_RELAY_PASSWORD        = random_password.kafka_relay.result
     KAFKA_ML_USERNAME           = "ml-service"
     KAFKA_ML_PASSWORD           = random_password.kafka_ml.result
+    KAFKA_TOKEN_USERNAME        = "token-enclave-service"
+    KAFKA_TOKEN_PASSWORD        = random_password.kafka_token.result
   })
 }
 
@@ -222,14 +236,17 @@ resource "aws_secretsmanager_secret_version" "intent" {
   secret_id = aws_secretsmanager_secret.intent.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY              = random_password.intent_vault_key.result
-    CANNONICALS3_BUCKET         = "zord-intent-engine-canonical"
-    NIRS3_BUCKET                = "zord-intent-engine-nir"
-    GOVERNANCES3_BUCKET         = "zord-intent-engine-governance"
-    SERVICE_JWT_SIGNING_SECRET  = random_password.service_jwt_signing_secret.result # shared (intent signs)
-    RELAY_SERVICES_0_AUTH_TOKEN = random_password.relay_slot_0_token.result         # intent = relay slot 0
-    KAFKA_USERNAME              = "intent-service"
-    KAFKA_PASSWORD              = random_password.kafka_intent.result
+    ZORD_VAULT_KEY                       = random_password.intent_vault_key.result
+    CANNONICALS3_BUCKET                  = "zord-intent-engine-canonical"
+    NIRS3_BUCKET                         = "zord-intent-engine-nir"
+    GOVERNANCES3_BUCKET                  = "zord-intent-engine-governance"
+    SERVICE_JWT_SIGNING_SECRET           = random_password.service_jwt_signing_secret.result           # shared (intent signs)
+    JWT_SIGNING_SECRET                   = random_password.jwt_signing_secret.result                   # shared (verifies edge JWT)
+    TOKENIZED_DATA_HASH_MASTER_SECRET    = random_password.tokenized_data_hash_master_secret.result    # shared with token-enclave
+    INTENT_ENGINE_INTERNAL_SERVICE_TOKEN = random_password.intent_engine_internal_service_token.result # shared (console -> intent)
+    RELAY_SERVICES_0_AUTH_TOKEN          = random_password.relay_slot_0_token.result                   # intent = relay slot 0
+    KAFKA_USERNAME                       = "intent-service"
+    KAFKA_PASSWORD                       = random_password.kafka_intent.result
   })
 }
 
@@ -255,6 +272,8 @@ resource "aws_secretsmanager_secret_version" "token_enclave" {
     TOKENIZED_DATA_HASH_MASTER_SECRET = random_password.tokenized_data_hash_master_secret.result
     SERVICE_JWT_SIGNING_SECRET        = random_password.service_jwt_signing_secret.result # shared (token-enclave verifies intent's JWT)
     KMS_KEY_ID                        = var.token_enclave_kms_key_arn                     # live current-account ARN
+    KAFKA_USERNAME                    = "token-enclave-service"
+    KAFKA_PASSWORD                    = random_password.kafka_token.result
   })
 }
 
@@ -384,9 +403,10 @@ resource "aws_secretsmanager_secret" "console" {
 resource "aws_secretsmanager_secret_version" "console" {
   secret_id = aws_secretsmanager_secret.console.id
   secret_string = jsonencode({
-    JWT_SIGNING_SECRET        = random_password.jwt_signing_secret.result # shared (console verifies)
-    SLACK_LEADS_WEBHOOK_URL   = "CHANGE_ME"                               # real webhook — human-provided
-    SLACK_SUPPORT_WEBHOOK_URL = "CHANGE_ME"                               # real webhook — human-provided
+    JWT_SIGNING_SECRET                   = random_password.jwt_signing_secret.result                   # shared (console verifies)
+    INTENT_ENGINE_INTERNAL_SERVICE_TOKEN = random_password.intent_engine_internal_service_token.result # shared (console -> intent, must match)
+    SLACK_LEADS_WEBHOOK_URL              = "CHANGE_ME"                                                 # real webhook — human-provided
+    SLACK_SUPPORT_WEBHOOK_URL            = "CHANGE_ME"                                                 # real webhook — human-provided
   })
   lifecycle { ignore_changes = [secret_string] }
 }
