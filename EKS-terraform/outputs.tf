@@ -271,3 +271,12 @@ output "rds_connection_secret" {
   description = "Secrets Manager secret holding RDS endpoint + master creds."
   value       = "${var.environment}/zord/db-connection"
 }
+
+############################
+# resource group
+############################
+
+output "resource_group_name" {
+  description = "AWS Resource Group showing all this project's resources (single-pane-of-glass in the Console)."
+  value       = aws_resourcegroups_group.zord.name
+}

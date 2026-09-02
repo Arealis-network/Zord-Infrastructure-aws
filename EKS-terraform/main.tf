@@ -535,3 +535,50 @@ module "cloudfront_waf" {
   waf_rate_limit      = var.waf_rate_limit
   acm_certificate_arn = local.cloudfront_edge_active ? data.aws_acm_certificate.wildcard_us_east_1[0].arn : ""
 }
+
+############################
+# AWS RESOURCE GROUP (MNC single-pane-of-glass)
+############################
+# One Console view of EVERY resource tagged Project=arealis-zord-eks for this
+# environment (EKS, EC2, RDS, S3, KMS, secrets, VPC, ...). All resources already
+# get this tag via the provider default_tags, so the group auto-captures them and
+# excludes other teams' resources in the shared account. Used for cost allocation,
+# audits, and bulk ops. Free.
+
+resource "aws_resourcegroups_group" "zord" {
+  name        = "Arealis zordnet ${local.env_short}"
+  description = "Arealis Zordnet (${var.environment}) — all project resources, single-pane-of-glass."
+
+  resource_query {
+    query = jsonencode({
+      ResourceTypeFilters = ["AWS::AllSupported"]
+      TagFilters = [
+        {
+          Key    = "Project"
+          Values = ["arealis-zord-eks"]
+        },
+        {
+          Key    = "Environment"
+          Values = [var.environment]
+        }
+      ]
+    })
+  }
+
+  tags = {
+    Name = "${local.eks_name_prefix} resource group"
+  }
+}
+
+############################
+# AWS COMPUTE OPTIMIZER (free, read-only right-sizing recommendations)
+############################
+# Analyzes CloudWatch metrics of EC2/EKS-node ASGs/EBS/RDS and recommends
+# right-sizing (over/under-provisioned). Free tier. Read-only — it never modifies
+# resources, only surfaces recommendations. NOTE: enrollment is ACCOUNT-WIDE (not
+# per-project); it enables analysis for the whole account. Filter its findings by
+# the Project tag in the Console. Needs ~14 days of metrics before results appear.
+
+resource "aws_computeoptimizer_enrollment_status" "this" {
+  status = "Active"
+}
