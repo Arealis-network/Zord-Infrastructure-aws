@@ -98,6 +98,12 @@ resource "tls_private_key" "evidence_signing" {
   algorithm = "ED25519"
 }
 
+# ── Edge signing key — stable Ed25519, generated once by Terraform. Mounted as a
+#    PEM file at /run/secrets/ed25519_private.pem for edge-service to sign with.
+resource "tls_private_key" "edge_signing" {
+  algorithm = "ED25519"
+}
+
 # ── Kafka SCRAM: per-service users + admin (SASL_PLAINTEXT / SCRAM-SHA-512) ──
 resource "random_password" "kafka_admin" {
   length  = 28
@@ -461,10 +467,12 @@ resource "aws_secretsmanager_secret" "edge_signing_key" {
 
 resource "aws_secretsmanager_secret_version" "edge_signing_key" {
   secret_id = aws_secretsmanager_secret.edge_signing_key.id
+  # Real Ed25519 PEM (generated once by Terraform), not a CHANGE_ME placeholder.
+  # NOT frozen: the key is already stable because tls_private_key.edge_signing is
+  # never regenerated on re-apply, so the mounted PEM stays constant.
   secret_string = jsonencode({
-    "ed25519_private.pem" = "-----BEGIN PRIVATE KEY-----\nCHANGE_ME\n-----END PRIVATE KEY-----"
+    "ed25519_private.pem" = tls_private_key.edge_signing.private_key_pem
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
@@ -480,10 +488,12 @@ resource "aws_secretsmanager_secret" "evidence_signing_key" {
 
 resource "aws_secretsmanager_secret_version" "evidence_signing_key" {
   secret_id = aws_secretsmanager_secret.evidence_signing_key.id
+  # Real Ed25519 PEM — same key material as EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 in
+  # evidence-secrets, so signatures are consistent whichever the app reads. NOT
+  # frozen: tls_private_key.evidence_signing is stable across re-applies.
   secret_string = jsonencode({
-    "signing_key.pem" = "-----BEGIN PRIVATE KEY-----\nCHANGE_ME\n-----END PRIVATE KEY-----"
+    "signing_key.pem" = tls_private_key.evidence_signing.private_key_pem
   })
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
