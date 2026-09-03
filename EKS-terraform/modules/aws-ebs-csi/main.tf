@@ -67,15 +67,17 @@ resource "aws_eks_addon" "ebs_csi" {
 }
 
 # ─────────────────────────────────────────
-# gp3 StorageClass — EKS ships only gp2 by default. Workloads that request
-# storageClassName: gp3 (e.g. Prometheus in kube-prometheus-stack) get stuck
-# Pending PVCs without this. NOT marked default (EKS gp2 stays the default —
-# avoids the "two default StorageClasses" conflict); workloads ask for gp3 by name.
+# gp3 StorageClass — set as the SINGLE cluster DEFAULT (MNC best practice: gp3 is
+# cheaper + faster than gp2). Any PVC with no storageClassName gets gp3, so the
+# "unbound immediate PVC" error can't recur. Uses the EBS CSI driver.
 # ─────────────────────────────────────────
 
 resource "kubernetes_storage_class" "gp3" {
   metadata {
     name = "gp3"
+    annotations = {
+      "storageclass.kubernetes.io/is-default-class" = "true"
+    }
   }
 
   storage_provisioner    = "ebs.csi.aws.com"
@@ -89,4 +91,20 @@ resource "kubernetes_storage_class" "gp3" {
   }
 
   depends_on = [aws_eks_addon.ebs_csi]
+}
+
+# Remove the default flag from EKS's built-in gp2 so there is exactly ONE default
+# (gp3). Two default StorageClasses is an error; this unsets gp2's default.
+resource "kubernetes_annotations" "gp2_not_default" {
+  api_version = "storage.k8s.io/v1"
+  kind        = "StorageClass"
+  metadata {
+    name = "gp2"
+  }
+  annotations = {
+    "storageclass.kubernetes.io/is-default-class" = "false"
+  }
+  force = true
+
+  depends_on = [kubernetes_storage_class.gp3]
 }
