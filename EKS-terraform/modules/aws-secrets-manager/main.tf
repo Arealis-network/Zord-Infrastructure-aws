@@ -11,17 +11,15 @@
 # generated ONCE and replicated to every consumer's secret so they always match.
 # ═══════════════════════════════════════════════════════════════════
 
-# ── Per-service vault keys — EXACTLY 32 bytes, base64-encoded.
-# The services require a 32-byte key (they base64-decode ZORD_VAULT_KEY). Using
+# ── SHARED vault key — EXACTLY 32 bytes, base64-encoded, ONE value for ALL
+# services that encrypt/decrypt the same vault artifacts (edge, intent-engine,
+# outcome-engine, evidence). Edge encrypts with ZORD_VAULT_KEY; intent/outcome/
+# evidence decrypt with it (AES-GCM). If the keys differ, decryption fails with
+# "cipher: message authentication failed". So there is ONE shared key resource,
+# replicated into every consumer's secret so they always match.
 # random_bytes(32) -> base64 guarantees the decoded value is exactly 32 bytes.
 # (A 32-char random_password base64-decodes to ~24 bytes and fails validation.)
-resource "random_bytes" "edge_vault_key" {
-  length = 32
-}
-resource "random_bytes" "intent_vault_key" {
-  length = 32
-}
-resource "random_bytes" "outcome_vault_key" {
+resource "random_bytes" "shared_vault_key" {
   length = 32
 }
 
@@ -235,7 +233,7 @@ resource "aws_secretsmanager_secret_version" "edge" {
   # single Terraform-owned secret production/zord/db-connection (RDS module).
   # Only non-DB, service-specific secrets live here (fill CHANGE_ME once).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY     = random_bytes.edge_vault_key.base64
+    ZORD_VAULT_KEY     = random_bytes.shared_vault_key.base64 # SHARED (edge encrypts; intent/outcome/evidence decrypt)
     VAULT_KEY_ID       = random_password.edge_vault_key_id.result
     INTERNAL_ADMIN_KEY = random_password.edge_internal_admin_key.result
     EDGE_S3_BUCKET     = "zord-edge-ingress"
@@ -261,7 +259,7 @@ resource "aws_secretsmanager_secret_version" "intent" {
   secret_id = aws_secretsmanager_secret.intent.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY                       = random_bytes.intent_vault_key.base64
+    ZORD_VAULT_KEY                       = random_bytes.shared_vault_key.base64 # SHARED (must match edge)
     CANNONICALS3_BUCKET                  = "zord-intent-engine-canonical"
     NIRS3_BUCKET                         = "zord-intent-engine-nir"
     GOVERNANCES3_BUCKET                  = "zord-intent-engine-governance"
@@ -340,7 +338,7 @@ resource "aws_secretsmanager_secret_version" "outcome" {
   secret_id = aws_secretsmanager_secret.outcome.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY     = random_bytes.outcome_vault_key.base64
+    ZORD_VAULT_KEY     = random_bytes.shared_vault_key.base64 # SHARED (must match edge)
     OUTCOME_S3_BUCKET  = "zord-outcome-engine-settlement-ingress"
     JWT_SIGNING_SECRET = random_password.jwt_signing_secret.result # shared (outcome verifies)
     RELAY_AUTH_TOKEN   = random_password.relay_slot_2_token.result # outcome = relay slot 2
@@ -365,6 +363,7 @@ resource "aws_secretsmanager_secret_version" "evidence" {
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
     EVIDENCE_S3_BUCKET = "zord-evidence-vault"
+    ZORD_VAULT_KEY     = random_bytes.shared_vault_key.base64 # SHARED (evidence decrypts vault artifacts; must match edge)
     # Stable Ed25519 signing key (base64 of the PEM), generated once by Terraform.
     EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 = base64encode(tls_private_key.evidence_signing.private_key_pem)
     EVIDENCE_KMS_KEY_ARN                = var.evidence_kms_key_arn
