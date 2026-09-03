@@ -362,8 +362,6 @@ resource "aws_secretsmanager_secret_version" "evidence" {
     KAFKA_USERNAME                      = "evidence-service"
     KAFKA_PASSWORD                      = random_password.kafka_evidence.result
   })
-  # Freeze so the signing key is never regenerated (would break old-pack verification).
-  lifecycle { ignore_changes = [secret_string] }
 }
 
 # ─────────────────────────────────────────
