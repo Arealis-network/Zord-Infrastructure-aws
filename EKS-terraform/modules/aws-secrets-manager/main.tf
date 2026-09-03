@@ -426,6 +426,14 @@ resource "aws_secretsmanager_secret_version" "console" {
     INTENT_ENGINE_INTERNAL_SERVICE_TOKEN = random_password.intent_engine_internal_service_token.result # shared (console -> intent, must match)
     SLACK_LEADS_WEBHOOK_URL              = "CHANGE_ME"                                                 # real webhook — human-provided
     SLACK_SUPPORT_WEBHOOK_URL            = "CHANGE_ME"                                                 # real webhook — human-provided
+
+    # SMTP (email). Non-secret values set here; PASSWORD is a real Gmail app
+    # password — set it in the Secrets Manager Console, never commit it to Git.
+    SMTP_HOST = "smtp.gmail.com"
+    SMTP_PORT = "587"
+    SMTP_USER = "careers@arealis.io"
+    SMTP_FROM = "Arealis Zord <careers@arealis.io>"
+    SMTP_PASS = "CHANGE_ME"
   })
   lifecycle { ignore_changes = [secret_string] }
 }
