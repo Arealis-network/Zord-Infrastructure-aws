@@ -435,6 +435,18 @@ module "cluster_autoscaler" {
 }
 
 ############################
+# METRICS SERVER MODULE
+############################
+# Provides metrics.k8s.io (CPU/memory) for HPAs and `kubectl top`. Without it
+# every HPA reads <unknown> and cannot scale (e.g. kong-gateway). No AWS IAM.
+
+module "metrics_server" {
+  source = "./modules/helm-metrics-server"
+
+  node_groups_ready = module.node_groups.stateless_node_group_id
+}
+
+############################
 # AWS LOAD BALANCER CONTROLLER MODULE
 ############################
 # Turns Ingress/Service objects into the single shared ALB (zord-shared-alb)
