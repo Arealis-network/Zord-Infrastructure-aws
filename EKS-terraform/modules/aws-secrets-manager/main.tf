@@ -131,6 +131,10 @@ resource "random_password" "kafka_ml" {
   length  = 28
   special = false
 }
+resource "random_password" "kafka_prompt_layer" {
+  length  = 28
+  special = false
+}
 
 # ─────────────────────────────────────────
 # Shared Infrastructure Config (DB host, Kafka, etc.)
@@ -203,6 +207,8 @@ resource "aws_secretsmanager_secret_version" "kafka" {
     KAFKA_ML_PASSWORD           = random_password.kafka_ml.result
     KAFKA_TOKEN_USERNAME        = "token-enclave-service"
     KAFKA_TOKEN_PASSWORD        = random_password.kafka_token.result
+    KAFKA_PROMPT_LAYER_USERNAME = "prompt-layer-service"
+    KAFKA_PROMPT_LAYER_PASSWORD = random_password.kafka_prompt_layer.result
   })
 }
 
@@ -400,6 +406,12 @@ resource "aws_secretsmanager_secret" "prompt_layer" {
 
 resource "aws_secretsmanager_secret_version" "prompt_layer" {
   secret_id = aws_secretsmanager_secret.prompt_layer.id
+  # GEMINI_API_KEYS is human-provided (set once in the Console) so this stays frozen.
+  # Kafka creds for prompt-layer are NOT stored here (a frozen secret would let the
+  # KAFKA_PASSWORD drift from kafka-secrets and break SCRAM). Instead prompt-layer
+  # reads its Kafka user/pass from the shared production/zord/kafka-secrets
+  # (KAFKA_PROMPT_LAYER_USERNAME / KAFKA_PROMPT_LAYER_PASSWORD) — same pattern as
+  # ml-service — which is unfrozen and always in sync.
   secret_string = jsonencode({
     GEMINI_API_KEYS = "CHANGE_ME"
   })
