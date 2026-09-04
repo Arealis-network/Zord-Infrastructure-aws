@@ -153,9 +153,9 @@ variable "waf_rate_limit" {
 ############################
 
 variable "rds_instance_class" {
-  description = "RDS instance class. Free-tier: db.t3.micro. Scale later to db.t3.small / db.t3.medium."
+  description = "RDS instance class. db.t3.micro (1GB, ~81 conns) was the free-tier default. Set to db.t3.medium (4GB, ~340 conns) for prod: shared instance runs 8 DBs + monitoring exporters + evidence workers, so it needs real headroom (bigger cache, more CPU credits) to avoid connection starvation + burst throttling under load."
   type        = string
-  default     = "db.t3.micro"
+  default     = "db.t3.medium"
 }
 
 variable "rds_allocated_storage" {
