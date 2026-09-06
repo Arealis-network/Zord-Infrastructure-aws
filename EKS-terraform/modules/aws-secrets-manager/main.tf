@@ -318,6 +318,14 @@ resource "aws_secretsmanager_secret_version" "relay" {
     RELAY_SERVICES_0_AUTH_TOKEN = random_password.relay_slot_0_token.result # matches intent
     RELAY_SERVICES_1_AUTH_TOKEN = random_password.relay_slot_1_token.result # matches edge
     RELAY_SERVICES_2_AUTH_TOKEN = random_password.relay_slot_2_token.result # matches outcome
+    # Relay validates an auth_token for EVERY configured upstream (services 0-5).
+    # Slots 3/4/5 reuse existing tokens so they match the same upstreams:
+    #   3 = intent-engine-dlq   -> same as slot 0 (intent)
+    #   4 = intent-engine-batch -> same as slot 0 (intent)
+    #   5 = evidence-service    -> same as slot 2 (evidence's RELAY_AUTH_TOKEN = slot 2)
+    RELAY_SERVICES_3_AUTH_TOKEN = random_password.relay_slot_0_token.result
+    RELAY_SERVICES_4_AUTH_TOKEN = random_password.relay_slot_0_token.result
+    RELAY_SERVICES_5_AUTH_TOKEN = random_password.relay_slot_2_token.result
     KAFKA_USERNAME              = "relay-service"
     KAFKA_PASSWORD              = random_password.kafka_relay.result
   })
