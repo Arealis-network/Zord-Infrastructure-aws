@@ -16,6 +16,13 @@ variable "force_destroy_buckets" {
 
 
 
+# ── Bucket names ──
+# S3 bucket names are GLOBALLY unique across all of AWS, so they MUST be
+# environment-scoped or a second environment cannot be created at all
+# (BucketAlreadyOwnedByYou) and, worse, non-prod services would read/write
+# production data. Production keeps its existing unprefixed names for backward
+# compatibility; staging/dev get an env prefix. Callers pass these in from the
+# root module (see local.bucket_names) — the defaults below are prod's names.
 variable "edge_bucket_name" {
   description = "S3 bucket name for zord-edge ingress."
   type        = string

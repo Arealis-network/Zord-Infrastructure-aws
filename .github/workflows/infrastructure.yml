@@ -226,7 +226,9 @@ jobs:
           RDS_STATUS=$(aws rds describe-db-instances --region "${REGION}" --query "DBInstances[?starts_with(DBInstanceIdentifier,'arealis-zord')].DBInstanceStatus | [0]" --output text 2>/dev/null || echo "N/A")
 
           # Storage
-          OUR_BUCKETS="zord-edge-ingress zord-intent-engine-canonical zord-intent-engine-nir zord-intent-engine-governance zord-outcome-engine-settlement-ingress zord-evidence-vault"
+          # Env-scoped bucket names (prod unprefixed, staging/dev prefixed) - read
+          # from Terraform outputs so non-prod does not check prod bucket names.
+          OUR_BUCKETS=$(terraform output -json s3_bucket_names 2>/dev/null | jq -r ".[]" | tr "\n" " ")
           S3_COUNT=0
           for b in $OUR_BUCKETS; do aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && S3_COUNT=$((S3_COUNT+1)); done
           EBS_COUNT=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=in-use" "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" --query 'Volumes[*].VolumeId' --output text 2>/dev/null | wc -w || echo "0")
@@ -571,7 +573,9 @@ jobs:
 
           # S3 Buckets — count ONLY the exact 6 buckets THIS Terraform creates.
           # Any other zord-* bucket (state bucket, another team's bucket) is ignored.
-          OUR_BUCKETS="zord-edge-ingress zord-intent-engine-canonical zord-intent-engine-nir zord-intent-engine-governance zord-outcome-engine-settlement-ingress zord-evidence-vault"
+          # Env-scoped bucket names (prod unprefixed, staging/dev prefixed) - read
+          # from Terraform outputs so non-prod does not check prod bucket names.
+          OUR_BUCKETS=$(terraform output -json s3_bucket_names 2>/dev/null | jq -r ".[]" | tr "\n" " ")
           S3_COUNT=0
           for b in $OUR_BUCKETS; do
             aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && S3_COUNT=$((S3_COUNT+1))

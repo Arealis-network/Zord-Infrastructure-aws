@@ -236,7 +236,7 @@ resource "aws_secretsmanager_secret_version" "edge" {
     ZORD_VAULT_KEY     = random_bytes.shared_vault_key.base64 # SHARED (edge encrypts; intent/outcome/evidence decrypt)
     VAULT_KEY_ID       = random_password.edge_vault_key_id.result
     INTERNAL_ADMIN_KEY = random_password.edge_internal_admin_key.result
-    EDGE_S3_BUCKET     = "zord-edge-ingress"
+    EDGE_S3_BUCKET     = var.edge_bucket_name                      # env-scoped
     JWT_SIGNING_SECRET = random_password.jwt_signing_secret.result # shared (edge signs)
     RELAY_AUTH_TOKEN   = random_password.relay_slot_1_token.result # edge = relay slot 1
     KAFKA_USERNAME     = "edge-service"
@@ -259,10 +259,10 @@ resource "aws_secretsmanager_secret_version" "intent" {
   secret_id = aws_secretsmanager_secret.intent.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY                       = random_bytes.shared_vault_key.base64 # SHARED (must match edge)
-    CANNONICALS3_BUCKET                  = "zord-intent-engine-canonical"
-    NIRS3_BUCKET                         = "zord-intent-engine-nir"
-    GOVERNANCES3_BUCKET                  = "zord-intent-engine-governance"
+    ZORD_VAULT_KEY                       = random_bytes.shared_vault_key.base64                        # SHARED (must match edge)
+    CANNONICALS3_BUCKET                  = var.canonical_bucket_name                                   # env-scoped
+    NIRS3_BUCKET                         = var.nir_bucket_name                                         # env-scoped
+    GOVERNANCES3_BUCKET                  = var.governance_bucket_name                                  # env-scoped
     SERVICE_JWT_SIGNING_SECRET           = random_password.service_jwt_signing_secret.result           # shared (intent signs)
     JWT_SIGNING_SECRET                   = random_password.jwt_signing_secret.result                   # shared (verifies edge JWT)
     TOKENIZED_DATA_HASH_MASTER_SECRET    = random_password.tokenized_data_hash_master_secret.result    # shared with token-enclave
@@ -346,8 +346,8 @@ resource "aws_secretsmanager_secret_version" "outcome" {
   secret_id = aws_secretsmanager_secret.outcome.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    ZORD_VAULT_KEY     = random_bytes.shared_vault_key.base64 # SHARED (must match edge)
-    OUTCOME_S3_BUCKET  = "zord-outcome-engine-settlement-ingress"
+    ZORD_VAULT_KEY     = random_bytes.shared_vault_key.base64      # SHARED (must match edge)
+    OUTCOME_S3_BUCKET  = var.outcome_bucket_name                   # env-scoped
     JWT_SIGNING_SECRET = random_password.jwt_signing_secret.result # shared (outcome verifies)
     RELAY_AUTH_TOKEN   = random_password.relay_slot_2_token.result # outcome = relay slot 2
     KAFKA_USERNAME     = "outcome-service"
@@ -370,7 +370,7 @@ resource "aws_secretsmanager_secret_version" "evidence" {
   secret_id = aws_secretsmanager_secret.evidence.id
   # DB connectivity comes from production/zord/db-connection (RDS module).
   secret_string = jsonencode({
-    EVIDENCE_S3_BUCKET = "zord-evidence-vault"
+    EVIDENCE_S3_BUCKET = var.evidence_bucket_name             # env-scoped
     ZORD_VAULT_KEY     = random_bytes.shared_vault_key.base64 # SHARED (evidence decrypts vault artifacts; must match edge)
     # Stable Ed25519 signing key (base64 of the PEM), generated once by Terraform.
     EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 = base64encode(tls_private_key.evidence_signing.private_key_pem)

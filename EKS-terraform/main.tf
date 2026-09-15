@@ -172,6 +172,19 @@ locals {
   # Full env word used in DNS names (staging/dev, not the short "stg").
   env_short_full = var.environment == "staging" ? "staging" : "dev"
 
+  # S3 bucket names are GLOBALLY unique across AWS. Production keeps its existing
+  # unprefixed names (no data migration); staging/dev are prefixed so all three
+  # environments can coexist AND non-prod can never read/write prod objects.
+  bucket_prefix = var.environment == "production" ? "" : "${local.env_short}-"
+  bucket_names = {
+    edge       = "${local.bucket_prefix}zord-edge-ingress"
+    canonical  = "${local.bucket_prefix}zord-intent-engine-canonical"
+    nir        = "${local.bucket_prefix}zord-intent-engine-nir"
+    governance = "${local.bucket_prefix}zord-intent-engine-governance"
+    outcome    = "${local.bucket_prefix}zord-outcome-engine-settlement-ingress"
+    evidence   = "${local.bucket_prefix}zord-evidence-vault"
+  }
+
   env_short           = local.env_short_map[var.environment]
   cluster_name        = "arealis-zord-${local.env_short}-eks"
   admin_principal_arn = var.eks_admin_principal_arn != "" ? var.eks_admin_principal_arn : data.aws_caller_identity.current.arn
@@ -354,6 +367,14 @@ module "s3_buckets" {
   environment           = var.environment
   kms_key_arn           = module.kms.s3_kms_key_arn
   force_destroy_buckets = var.force_destroy_buckets
+
+  # Env-scoped names (prod keeps existing names; staging/dev prefixed).
+  edge_bucket_name       = local.bucket_names.edge
+  canonical_bucket_name  = local.bucket_names.canonical
+  nir_bucket_name        = local.bucket_names.nir
+  governance_bucket_name = local.bucket_names.governance
+  outcome_bucket_name    = local.bucket_names.outcome
+  evidence_bucket_name   = local.bucket_names.evidence
 }
 
 ############################
@@ -415,6 +436,15 @@ module "secrets_manager" {
   acm_certificate_arn       = data.aws_acm_certificate.wildcard.arn
   evidence_kms_key_arn      = module.kms_evidence_archive.kms_key_arn
   token_enclave_kms_key_arn = module.kms_token_enclave.kms_key_arn
+
+  # Env-scoped bucket names so each environment's services read/write THEIR OWN
+  # buckets (previously hardcoded to prod's names).
+  edge_bucket_name       = local.bucket_names.edge
+  canonical_bucket_name  = local.bucket_names.canonical
+  nir_bucket_name        = local.bucket_names.nir
+  governance_bucket_name = local.bucket_names.governance
+  outcome_bucket_name    = local.bucket_names.outcome
+  evidence_bucket_name   = local.bucket_names.evidence
 }
 
 ############################
