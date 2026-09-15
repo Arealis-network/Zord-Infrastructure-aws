@@ -39,9 +39,10 @@ terraform {
 }
 
 locals {
-  enabled     = var.origin_domain_name != ""
-  fqdn        = "${var.subdomain}.${var.domain}"
-  name_prefix = "arealis-zord-${var.environment == "production" ? "prod" : "stg"}"
+  enabled = var.origin_domain_name != ""
+  fqdn    = "${var.subdomain}.${var.domain}"
+  # 3-way env map (not a binary ternary) so dev does not collide with staging.
+  name_prefix = "arealis-zord-${lookup({ production = "prod", staging = "stg", dev = "dev" }, var.environment, "dev")}"
   origin_id   = "kong-alb-origin"
 }
 

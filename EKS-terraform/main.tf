@@ -86,7 +86,9 @@ data "aws_ssm_parameter" "amazon_linux_2023_ami" {
 # apex — querying "*.zordnet.com" returns "empty result" because that is only a
 # subject-alternative-name, not the primary domain.
 data "aws_acm_certificate" "wildcard" {
-  domain      = var.ses_domain
+  # Per-env: prod resolves zordnet.com, staging/dev resolve
+  # staging.zordnet.com / dev.zordnet.com (each needs its own issued cert).
+  domain      = local.env_domain
   statuses    = ["ISSUED"]
   most_recent = true
 }
@@ -133,7 +135,7 @@ data "aws_acm_certificate" "wildcard_us_east_1" {
   count    = local.cloudfront_edge_active ? 1 : 0
   provider = aws.us_east_1
 
-  domain      = var.ses_domain
+  domain      = local.env_domain
   statuses    = ["ISSUED"]
   most_recent = true
 }
@@ -145,7 +147,32 @@ data "aws_eks_cluster_auth" "this" {
 }
 
 locals {
-  env_short           = var.environment == "production" ? "prod" : "stg"
+  # Per-environment short name. Drives every resource name/prefix so dev, staging
+  # and production never collide in the shared AWS account.
+  env_short_map = {
+    production = "prod"
+    staging    = "stg"
+    dev        = "dev"
+  }
+
+  # Per-environment VPC CIDR blocks — MUST NOT overlap, all three coexist in the
+  # same account (prod 10.0/16, staging 10.1/16, dev 10.2/16).
+  env_cidr_map = {
+    production = { vpc = "10.0.0.0/16", pub1 = "10.0.1.0/24", pub2 = "10.0.2.0/24", priv1 = "10.0.3.0/24", priv2 = "10.0.4.0/24" }
+    staging    = { vpc = "10.1.0.0/16", pub1 = "10.1.1.0/24", pub2 = "10.1.2.0/24", priv1 = "10.1.3.0/24", priv2 = "10.1.4.0/24" }
+    dev        = { vpc = "10.2.0.0/16", pub1 = "10.2.1.0/24", pub2 = "10.2.2.0/24", priv1 = "10.2.3.0/24", priv2 = "10.2.4.0/24" }
+  }
+
+  # Per-environment DNS zone. Prod uses the apex (zordnet.com); non-prod uses a
+  # subdomain (staging.zordnet.com / dev.zordnet.com) so hosts are
+  # api.staging.zordnet.com etc. Drives the ACM cert lookup, the External DNS
+  # domain filter, and all ingress hostnames.
+  env_domain = var.environment == "production" ? var.ses_domain : "${local.env_short_full}.${var.ses_domain}"
+
+  # Full env word used in DNS names (staging/dev, not the short "stg").
+  env_short_full = var.environment == "staging" ? "staging" : "dev"
+
+  env_short           = local.env_short_map[var.environment]
   cluster_name        = "arealis-zord-${local.env_short}-eks"
   admin_principal_arn = var.eks_admin_principal_arn != "" ? var.eks_admin_principal_arn : data.aws_caller_identity.current.arn
   vpc_name_prefix     = "Arealis zord ${local.env_short} vpc"
@@ -163,13 +190,13 @@ locals {
     Cluster     = local.cluster_name
   }
 
-  # Use different CIDR ranges per environment so both can coexist in the same account
-  # production: 10.0.0.0/16, staging: 10.1.0.0/16
-  vpc_cidr      = var.environment == "production" ? "10.0.0.0/16" : "10.1.0.0/16"
-  public1_cidr  = var.environment == "production" ? "10.0.1.0/24" : "10.1.1.0/24"
-  public2_cidr  = var.environment == "production" ? "10.0.2.0/24" : "10.1.2.0/24"
-  private1_cidr = var.environment == "production" ? "10.0.3.0/24" : "10.1.3.0/24"
-  private2_cidr = var.environment == "production" ? "10.0.4.0/24" : "10.1.4.0/24"
+  # Non-overlapping CIDRs per environment (see env_cidr_map above) so dev, staging
+  # and production VPCs all coexist safely in the shared account.
+  vpc_cidr      = local.env_cidr_map[var.environment].vpc
+  public1_cidr  = local.env_cidr_map[var.environment].pub1
+  public2_cidr  = local.env_cidr_map[var.environment].pub2
+  private1_cidr = local.env_cidr_map[var.environment].priv1
+  private2_cidr = local.env_cidr_map[var.environment].priv2
 
   # Secret ARNs for External Secrets Operator (all per-service secrets)
   external_secret_arns = [
@@ -474,7 +501,7 @@ module "external_dns" {
   source = "./modules/helm-external-dns"
 
   cluster_name             = module.eks.cluster_name
-  domain                   = var.ses_domain
+  domain                   = local.env_domain
   eks_name_prefix          = local.eks_name_prefix
   eks_resource_prefix      = local.eks_resource_prefix
   node_groups_ready        = module.node_groups.stateless_node_group_id
@@ -516,7 +543,7 @@ module "argocd" {
   source = "./modules/helm-argocd"
 
   environment         = var.environment
-  domain              = var.ses_domain
+  domain              = local.env_domain
   acm_certificate_arn = data.aws_acm_certificate.wildcard.arn
   node_groups_ready   = module.node_groups.stateless_node_group_id
   github_pat          = var.github_pat
@@ -542,7 +569,7 @@ module "cloudfront_waf" {
   }
 
   environment         = var.environment
-  domain              = var.ses_domain
+  domain              = local.env_domain
   subdomain           = var.cloudfront_subdomain
   origin_domain_name  = local.kong_alb_dns
   waf_rate_limit      = var.waf_rate_limit

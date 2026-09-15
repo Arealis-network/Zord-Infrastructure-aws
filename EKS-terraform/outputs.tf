@@ -116,8 +116,13 @@ output "oidc_provider_url" {
 ############################
 
 output "ses_domain" {
-  description = "SES domain identity."
+  description = "SES domain identity (always the apex - email domain does not change per environment)."
   value       = module.ses.ses_domain
+}
+
+output "env_domain" {
+  description = "Per-environment DNS zone used for ingress hosts / ACM / External DNS. production = zordnet.com, staging = staging.zordnet.com, dev = dev.zordnet.com."
+  value       = local.env_domain
 }
 
 output "ses_verification_token" {

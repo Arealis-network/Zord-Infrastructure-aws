@@ -23,6 +23,8 @@ on:
         type: choice
         options:
           - production
+          - staging
+          - dev
       action:
         description: "Choose action"
         required: true
@@ -234,6 +236,8 @@ jobs:
           SECRET_COUNT=$(aws secretsmanager list-secrets --region "${REGION}" --filters Key=name,Values="${ENV}/zord" --query 'SecretList[*].Name' --output text 2>/dev/null | wc -w || echo "0")
           KMS_COUNT=$(aws kms list-aliases --region "${REGION}" --query "Aliases[?contains(AliasName,'zord')].AliasName" --output text 2>/dev/null | wc -w || echo "0")
           SES_DOMAIN=$(terraform output -raw ses_domain 2>/dev/null || echo "N/A")
+          # Per-env DNS zone for the Access URLs below (staging/dev use a subdomain).
+          ENV_DOMAIN=$(terraform output -raw env_domain 2>/dev/null || echo "${SES_DOMAIN}")
 
           # Addons
           ADDONS=$(aws eks list-addons --cluster-name "${CLUSTER_NAME}" --region "${REGION}" --query 'addons' --output text 2>/dev/null | tr '\t' ' ' || echo "N/A")
@@ -349,12 +353,12 @@ jobs:
             echo ""
             echo "| Service | URL | Notes |"
             echo "|---|---|---|"
-            echo "| API (CloudFront + WAF) | https://api.${SES_DOMAIN} | ${CF_STATUS} |"
-            echo "| ArgoCD (GitOps UI) | https://argocd.${SES_DOMAIN} | infra-owned, live |"
-            echo "| Grafana (dashboards) | https://grafana.${SES_DOMAIN} | after monitoring app is Healthy |"
-            echo "| Kibana (logs) | https://kibana.${SES_DOMAIN} | after logging app is Synced |"
-            echo "| Jaeger (traces) | https://jaeger.${SES_DOMAIN} | after tracing app is Synced |"
-            echo "| Kong admin UI | https://kong-admin.${SES_DOMAIN} | after kong app is Synced |"
+            echo "| API (CloudFront + WAF) | https://api.${ENV_DOMAIN} | ${CF_STATUS} |"
+            echo "| ArgoCD (GitOps UI) | https://argocd.${ENV_DOMAIN} | infra-owned, live |"
+            echo "| Grafana (dashboards) | https://grafana.${ENV_DOMAIN} | after monitoring app is Healthy |"
+            echo "| Kibana (logs) | https://kibana.${ENV_DOMAIN} | after logging app is Synced |"
+            echo "| Jaeger (traces) | https://jaeger.${ENV_DOMAIN} | after tracing app is Synced |"
+            echo "| Kong admin UI | https://kong-admin.${ENV_DOMAIN} | prod only (non-prod has no kong-admin host) |"
             echo ""
             echo "All dashboards ride the single shared ALB (group zord-observability); DNS auto-created by External DNS; TLS via the wildcard ACM cert (auto-discovered)."
             echo ""

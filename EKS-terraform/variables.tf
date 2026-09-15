@@ -3,13 +3,13 @@
 ############################
 
 variable "environment" {
-  description = "Deployment environment. Must be staging or production."
+  description = "Deployment environment. Must be dev, staging or production."
   type        = string
   default     = "production"
 
   validation {
-    condition     = contains(["staging", "production"], var.environment)
-    error_message = "environment must be staging or production."
+    condition     = contains(["dev", "staging", "production"], var.environment)
+    error_message = "environment must be dev, staging or production."
   }
 }
 
