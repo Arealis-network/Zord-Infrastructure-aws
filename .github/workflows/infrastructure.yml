@@ -211,7 +211,10 @@ jobs:
           EKS_STATUS=$(aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" --query "cluster.status" --output text 2>/dev/null || echo "N/A")
           EKS_VERSION=$(aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" --query "cluster.version" --output text 2>/dev/null || echo "N/A")
           NODE_COUNT=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:eks:cluster-name,Values=${CLUSTER_NAME}" --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null | wc -w || echo "0")
-          EC2_ID=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=tag:Project,Values=arealis-zord-eks" "Name=tag:Name,Values=*admin*" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "N/A")
+          # Scope to THIS environment: the Project tag is identical in every env, so
+          # filter on the env-unique Cluster tag instead (else a dev apply would
+          # report prod's bastion).
+          EC2_ID=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=tag:Cluster,Values=${CLUSTER_NAME}" "Name=tag:Name,Values=*admin*" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "N/A")
           EC2_IP=$(terraform output -raw ec2_public_ip 2>/dev/null || echo "N/A")
 
           # Network
@@ -223,7 +226,9 @@ jobs:
 
           # Database
           RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "N/A")
-          RDS_STATUS=$(aws rds describe-db-instances --region "${REGION}" --query "DBInstances[?starts_with(DBInstanceIdentifier,'arealis-zord')].DBInstanceStatus | [0]" --output text 2>/dev/null || echo "N/A")
+          # Scope to THIS env's instance (arealis-zord-<env>-eks-postgres), otherwise
+          # 'arealis-zord' matches all three environments' databases.
+          RDS_STATUS=$(aws rds describe-db-instances --region "${REGION}" --query "DBInstances[?DBInstanceIdentifier=='${CLUSTER_NAME}-postgres'].DBInstanceStatus | [0]" --output text 2>/dev/null || echo "N/A")
 
           # Storage
           # Env-scoped bucket names (prod unprefixed, staging/dev prefixed) - read
@@ -234,9 +239,11 @@ jobs:
           EBS_COUNT=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=in-use" "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" --query 'Volumes[*].VolumeId' --output text 2>/dev/null | wc -w || echo "0")
 
           # Security & secrets
-          IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'arealis-zord')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
+          # All three scoped to THIS environment only (role names and KMS aliases are
+          # prefixed with the env-unique cluster name; secrets with <env>/zord).
+          IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'${CLUSTER_NAME}')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
           SECRET_COUNT=$(aws secretsmanager list-secrets --region "${REGION}" --filters Key=name,Values="${ENV}/zord" --query 'SecretList[*].Name' --output text 2>/dev/null | wc -w || echo "0")
-          KMS_COUNT=$(aws kms list-aliases --region "${REGION}" --query "Aliases[?contains(AliasName,'zord')].AliasName" --output text 2>/dev/null | wc -w || echo "0")
+          KMS_COUNT=$(aws kms list-aliases --region "${REGION}" --query "Aliases[?starts_with(AliasName,'alias/${CLUSTER_NAME}')].AliasName" --output text 2>/dev/null | wc -w || echo "0")
           SES_DOMAIN=$(terraform output -raw ses_domain 2>/dev/null || echo "N/A")
           # Per-env DNS zone for the Access URLs below (staging/dev use a subdomain).
           ENV_DOMAIN=$(terraform output -raw env_domain 2>/dev/null || echo "${SES_DOMAIN}")
@@ -247,20 +254,27 @@ jobs:
           # Edge (CloudFront + WAF)
           CF_ENABLED=$(terraform output -raw cloudfront_enabled 2>/dev/null || echo "false")
           CF_DOMAIN=$(terraform output -raw cloudfront_domain_name 2>/dev/null || echo "")
-          CF_DIST_COUNT=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Comment,'arealis-zord')].Id" --output text 2>/dev/null | wc -w || echo "0")
-          WAF_ACL_COUNT=$(aws wafv2 list-web-acls --scope CLOUDFRONT --region us-east-1 --query "WebACLs[?contains(Name,'arealis-zord')].Id" --output text 2>/dev/null | wc -w || echo "0")
+          # Scoped to this env's prefix (arealis-zord-prod / -stg / -dev) so a dev
+          # apply does not count prod's distribution or WebACL.
+          EDGE_PREFIX="arealis-zord-$(case "${ENV}" in production) echo prod;; staging) echo stg;; *) echo dev;; esac)"
+          CF_DIST_COUNT=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Comment,'${EDGE_PREFIX}')].Id" --output text 2>/dev/null | wc -w || echo "0")
+          WAF_ACL_COUNT=$(aws wafv2 list-web-acls --scope CLOUDFRONT --region us-east-1 --query "WebACLs[?starts_with(Name,'${EDGE_PREFIX}')].Id" --output text 2>/dev/null | wc -w || echo "0")
           if [ "${CF_ENABLED}" = "true" ]; then CF_STATUS="active — ${CF_DOMAIN}"; else CF_STATUS="skipped (Kong ALB not up yet — auto-enables next apply)"; fi
 
           # Kong / in-cluster load balancer (only ones owned by this cluster)
           LB_COUNT=0
           for arn in $(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text 2>/dev/null); do
             [ -z "$arn" ] && continue
-            OWNED=$(aws elbv2 describe-tags --region "${REGION}" --resource-arns "$arn" --query "TagDescriptions[0].Tags[?Key=='elbv2.k8s.aws/cluster' || Key=='ingress.k8s.aws/stack'] | [?contains(Value,'zord') || contains(Value,'arealis')].Value" --output text 2>/dev/null)
+            # Only LBs owned by THIS cluster (the elbv2.k8s.aws/cluster tag carries the
+            # env-unique cluster name), so other envs' ALBs are not counted.
+            OWNED=$(aws elbv2 describe-tags --region "${REGION}" --resource-arns "$arn" --query "TagDescriptions[0].Tags[?Key=='elbv2.k8s.aws/cluster' && Value=='${CLUSTER_NAME}'].Value" --output text 2>/dev/null)
             [ -n "$OWNED" ] && LB_COUNT=$((LB_COUNT+1))
           done
 
           {
             echo "## Zord Infrastructure — ${ENV} — Apply Complete"
+            echo ""
+            echo "> Scope: this summary shows **${ENV} only** (cluster \`${CLUSTER_NAME}\`, VPC \`${VPC_ID}\`, domain \`${ENV_DOMAIN}\`). Other environments are excluded."
             echo ""
             echo "| Metric | Count |"
             echo "|---|---|"
@@ -528,30 +542,35 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REMAINING=$(terraform state list 2>/dev/null | grep -c '.' || echo "0")
 
+          # Env-unique names so this destroy check reports ONLY the target environment
+          # (the Project tag is identical across envs, so it must not be used alone).
+          ENV_SHORT=$(case "${ENV}" in production) echo prod;; staging) echo stg;; *) echo dev;; esac)
+          ENV_CLUSTER="arealis-zord-${ENV_SHORT}-eks"
+
           # ── Check every AWS resource category ──
           # EKS — only this project's clusters (name starts with arealis-zord), ignore other teams'.
-          EKS_CLUSTERS=$(aws eks list-clusters --region "${REGION}" --query "clusters[?starts_with(@,'arealis-zord')]" --output text 2>/dev/null | wc -w || echo "0")
+          EKS_CLUSTERS=$(aws eks list-clusters --region "${REGION}" --query "clusters[?@=='${ENV_CLUSTER}']" --output text 2>/dev/null | wc -w || echo "0")
           [ "${EKS_CLUSTERS}" -eq 0 ] && EKS_STATUS="✅ Deleted" || EKS_STATUS="❌ ${EKS_CLUSTERS} cluster(s) still exist"
 
           # EC2 — only this project's (Project tag), ignore other teams'.
-          EC2_RUNNING=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:Project,Values=arealis-zord-eks" --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null | wc -w || echo "0")
+          EC2_RUNNING=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${EC2_RUNNING}" -eq 0 ] && EC2_STATUS="✅ Deleted" || EC2_STATUS="❌ ${EC2_RUNNING} instance(s) running"
 
           # VPC — ONLY this project's VPC (tagged Project=arealis-zord by Terraform).
           # Other teams' VPCs in the same account are ignored.
-          VPC_COUNT=$(aws ec2 describe-vpcs --region "${REGION}" --filters "Name=isDefault,Values=false" "Name=tag:Project,Values=arealis-zord-eks" --query 'Vpcs[*].VpcId' --output text 2>/dev/null | wc -w || echo "0")
+          VPC_COUNT=$(aws ec2 describe-vpcs --region "${REGION}" --filters "Name=isDefault,Values=false" "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'Vpcs[*].VpcId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${VPC_COUNT}" -eq 0 ] && VPC_STATUS="✅ Deleted" || VPC_STATUS="❌ ${VPC_COUNT} VPC(s) still exist"
 
           # NAT Gateways — only this project's (Project tag), ignore other teams'.
-          NAT_COUNT=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" "Name=tag:Project,Values=arealis-zord-eks" --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null | wc -w || echo "0")
+          NAT_COUNT=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${NAT_COUNT}" -eq 0 ] && NAT_STATUS="✅ Deleted" || NAT_STATUS="❌ ${NAT_COUNT} NAT gateway(s)"
 
           # Elastic IPs — only this project's (Project tag), ignore other teams'.
-          EIP_COUNT=$(aws ec2 describe-addresses --region "${REGION}" --filters "Name=tag:Project,Values=arealis-zord-eks" --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null | wc -w || echo "0")
+          EIP_COUNT=$(aws ec2 describe-addresses --region "${REGION}" --filters "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${EIP_COUNT}" -eq 0 ] && EIP_STATUS="✅ Released" || EIP_STATUS="❌ ${EIP_COUNT} unassociated EIP(s)"
 
           # EBS Volumes (orphaned) — only this project's (Project tag), ignore other teams'.
-          EBS_AVAILABLE=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=available" "Name=tag:Project,Values=arealis-zord-eks" --query 'Volumes[*].VolumeId' --output text 2>/dev/null | wc -w || echo "0")
+          EBS_AVAILABLE=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=available" "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'Volumes[*].VolumeId' --output text 2>/dev/null | wc -w || echo "0")
           [ "${EBS_AVAILABLE}" -eq 0 ] && EBS_STATUS="✅ Deleted" || EBS_STATUS="❌ ${EBS_AVAILABLE} orphaned volume(s)"
 
           # Load Balancers — ONLY ones created by THIS project's EKS cluster.
@@ -568,7 +587,7 @@ jobs:
           [ "${LB_COUNT}" -eq 0 ] && LB_STATUS="✅ Deleted" || LB_STATUS="❌ ${LB_COUNT} zord LB(s) still exist"
 
           # IAM Roles
-          IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'arealis-zord')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
+          IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'${ENV_CLUSTER}')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
           [ "${IAM_ROLES}" -eq 0 ] && IAM_STATUS="✅ Deleted" || IAM_STATUS="❌ ${IAM_ROLES} role(s)"
 
           # S3 Buckets — count ONLY the exact 6 buckets THIS Terraform creates.
@@ -601,7 +620,7 @@ jobs:
           [ "${CW_LOGS}" -eq 0 ] && CW_STATUS="✅ Deleted" || CW_STATUS="❌ ${CW_LOGS} log group(s)"
 
           # EventBridge Schedulers
-          SCHED_COUNT=$(aws scheduler list-schedules --region "${REGION}" --query "Schedules[?contains(Name,'arealis-zord')].Name" --output text 2>/dev/null | wc -w || echo "0")
+          SCHED_COUNT=$(aws scheduler list-schedules --region "${REGION}" --query "Schedules[?contains(Name,'${ENV_CLUSTER}')].Name" --output text 2>/dev/null | wc -w || echo "0")
           [ "${SCHED_COUNT}" -eq 0 ] && SCHED_STATUS="✅ Deleted" || SCHED_STATUS="❌ ${SCHED_COUNT} schedule(s)"
 
           # Count passed/failed
