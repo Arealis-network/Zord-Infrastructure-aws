@@ -86,9 +86,12 @@ data "aws_ssm_parameter" "amazon_linux_2023_ami" {
 # apex — querying "*.zordnet.com" returns "empty result" because that is only a
 # subject-alternative-name, not the primary domain.
 data "aws_acm_certificate" "wildcard" {
-  # Per-env: prod resolves zordnet.com, staging/dev resolve
-  # staging.zordnet.com / dev.zordnet.com (each needs its own issued cert).
-  domain      = local.env_domain
+  # ONE certificate serves ALL environments. Its PRIMARY domain is the apex
+  # (zordnet.com) and every environment host is covered by its SANs
+  # (*.zordnet.com, *.staging.zordnet.com, *.dev.zordnet.com, ...).
+  # Always look it up by the apex - ACM matches on the primary domain only, so
+  # querying a subdomain here would return "empty result" and fail the apply.
+  domain      = var.ses_domain
   statuses    = ["ISSUED"]
   most_recent = true
 }
@@ -135,7 +138,9 @@ data "aws_acm_certificate" "wildcard_us_east_1" {
   count    = local.cloudfront_edge_active ? 1 : 0
   provider = aws.us_east_1
 
-  domain      = local.env_domain
+  # Same single cert, looked up by its PRIMARY domain (the apex) for every
+  # environment. Subdomain hosts are covered by the cert's SANs.
+  domain      = var.ses_domain
   statuses    = ["ISSUED"]
   most_recent = true
 }
