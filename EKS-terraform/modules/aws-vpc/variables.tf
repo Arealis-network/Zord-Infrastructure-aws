@@ -65,3 +65,8 @@ variable "flow_log_retention_days" {
   type        = number
   default     = 90
 }
+
+variable "cluster_name" {
+  description = "EKS cluster name for this environment. Used by the CIDR conflict guard to exclude THIS environment's own VPC (matched on the Cluster tag) so re-applies stay idempotent."
+  type        = string
+}

@@ -231,6 +231,7 @@ module "vpc" {
 
   environment         = var.environment
   aws_region          = var.aws_region
+  cluster_name        = local.cluster_name # used by the CIDR conflict guard
   vpc_name_prefix     = local.vpc_name_prefix
   vpc_resource_prefix = local.vpc_resource_prefix
   vpc_cidr            = local.vpc_cidr
