@@ -180,3 +180,106 @@ variable "force_destroy_buckets" {
   default     = true
 }
 
+
+##########################################################################
+# EXPLICIT PER-ENVIRONMENT INPUTS
+#
+# Set in environments/<env>/terraform.tfvars. Each environment declares its OWN
+# values so nothing is silently inherited from a production default - that is
+# what previously leaked prod's S3 bucket names, ACM lookup and Kong ALB tag
+# into other environments.
+#
+# All default to "" / null: when empty, main.tf falls back to the built-in
+# env maps, so an omitted value still resolves correctly.
+##########################################################################
+
+# ── Network ──
+variable "vpc_cidr" {
+  description = "VPC CIDR for this environment. MUST NOT overlap the other environments (the CIDR guard in the aws-vpc module fails the plan if it does). Empty = derive from the built-in env map."
+  type        = string
+  default     = ""
+}
+
+variable "public1_cidr" {
+  description = "Public subnet 1 CIDR. Empty = derive from the built-in env map."
+  type        = string
+  default     = ""
+}
+
+variable "public2_cidr" {
+  description = "Public subnet 2 CIDR. Empty = derive from the built-in env map."
+  type        = string
+  default     = ""
+}
+
+variable "private1_cidr" {
+  description = "Private subnet 1 CIDR. Empty = derive from the built-in env map."
+  type        = string
+  default     = ""
+}
+
+variable "private2_cidr" {
+  description = "Private subnet 2 CIDR. Empty = derive from the built-in env map."
+  type        = string
+  default     = ""
+}
+
+# ── DNS ──
+variable "env_domain" {
+  description = "DNS zone for THIS environment's ingress hosts (production = zordnet.com, staging = staging.zordnet.com, dev = dev.zordnet.com). Drives External DNS's domain filter and all ingress hostnames. NOTE: ses_domain stays the apex - SES verifies zordnet.com, so SMTP_FROM must not use a subdomain. Empty = derive from the built-in env map."
+  type        = string
+  default     = ""
+}
+
+# ── S3 bucket names ──
+# S3 names are GLOBALLY unique, so these must differ per environment. Production
+# keeps the original unprefixed names (a bucket cannot be renamed without being
+# destroyed, which would delete the evidence vault).
+variable "edge_bucket_name" {
+  description = "S3 bucket for zord-edge ingress. Empty = derive (prod unprefixed, non-prod env-prefixed)."
+  type        = string
+  default     = ""
+}
+
+variable "canonical_bucket_name" {
+  description = "S3 bucket for intent-engine canonical data. Empty = derive."
+  type        = string
+  default     = ""
+}
+
+variable "nir_bucket_name" {
+  description = "S3 bucket for intent-engine NIR data. Empty = derive."
+  type        = string
+  default     = ""
+}
+
+variable "governance_bucket_name" {
+  description = "S3 bucket for intent-engine governance data. Empty = derive."
+  type        = string
+  default     = ""
+}
+
+variable "outcome_bucket_name" {
+  description = "S3 bucket for outcome-engine settlement ingress. Empty = derive."
+  type        = string
+  default     = ""
+}
+
+variable "evidence_bucket_name" {
+  description = "S3 bucket for the evidence vault. Empty = derive."
+  type        = string
+  default     = ""
+}
+
+# ── RDS safety ──
+variable "rds_deletion_protection" {
+  description = "Protect the database from accidental deletion. Set true for a locked-down production; false while the environment is still being torn down and rebuilt (true BLOCKS terraform destroy)."
+  type        = bool
+  default     = false
+}
+
+variable "rds_skip_final_snapshot" {
+  description = "Skip the final snapshot on destroy. Set false for production so a snapshot is always taken before deletion."
+  type        = bool
+  default     = true
+}

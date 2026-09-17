@@ -161,12 +161,12 @@ jobs:
 
       - name: Terraform Init
         run: |
-          terraform init \
+          # Per-environment backend file (environments/<env>/backend.hcl) plus the
+          # bucket from the repo variable. -reconfigure so switching environments
+          # never reuses another env's cached backend.
+          terraform init -reconfigure \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ env.STATE_KEY }}" \
-            -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
-            -backend-config="encrypt=true" \
-            -backend-config="use_lockfile=true"
+            -backend-config="environments/${{ github.event.inputs.environment }}/backend.hcl"
 
       - name: Terraform Validate
         run: terraform validate
@@ -174,14 +174,14 @@ jobs:
       # ── PLAN ──
       - name: Terraform Plan
         if: github.event.inputs.action == 'plan'
-        run: terraform plan -no-color
+        run: terraform plan -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -no-color
 
       # ── APPLY ──
       - name: Terraform Apply
         if: github.event.inputs.action == 'apply'
         id: terraform_apply
         continue-on-error: true
-        run: terraform apply -auto-approve -no-color
+        run: terraform apply -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color
 
       - name: Debug — Retry Apply on Failure
         if: github.event.inputs.action == 'apply' && steps.terraform_apply.outcome == 'failure'
@@ -194,7 +194,7 @@ jobs:
           terraform state list 2>/dev/null | head -50 || echo "(no state)"
           echo ""
           echo "--- Retrying with debug log ---"
-          TF_LOG=ERROR terraform apply -auto-approve -no-color 2>&1 | tail -100
+          TF_LOG=ERROR terraform apply -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color 2>&1 | tail -100
           exit 1
 
       # ── POST-APPLY: Verify everything ──
@@ -402,7 +402,7 @@ jobs:
         run: |
           REGION="${{ env.AWS_REGION_VALUE }}"
           CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
-          [ -z "${CLUSTER_NAME}" ] && { terraform destroy -auto-approve -no-color; exit $?; }
+          [ -z "${CLUSTER_NAME}" ] && { terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color; exit $?; }
 
           CLUSTER_STATUS=$(aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
 
@@ -483,7 +483,7 @@ jobs:
           RESOURCES_BEFORE=$(terraform state list 2>/dev/null | grep -c '.' || echo "0")
           echo "RESOURCES_BEFORE=${RESOURCES_BEFORE}" >> "$GITHUB_ENV"
 
-          terraform destroy -auto-approve -no-color
+          terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color
 
       - name: Terraform Destroy Retry (if first attempt failed)
         if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome == 'failure'
@@ -532,7 +532,7 @@ jobs:
           fi
 
           sleep 30
-          terraform destroy -auto-approve -no-color
+          terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color
 
       - name: Destroy Verification
         if: github.event.inputs.action == 'destroy'

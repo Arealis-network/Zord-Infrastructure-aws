@@ -173,7 +173,8 @@ locals {
   # subdomain (staging.zordnet.com / dev.zordnet.com) so hosts are
   # api.staging.zordnet.com etc. Drives the ACM cert lookup, the External DNS
   # domain filter, and all ingress hostnames.
-  env_domain = var.environment == "production" ? var.ses_domain : "${local.env_short_full}.${var.ses_domain}"
+  # Explicit tfvars value wins; otherwise derive (prod = apex, non-prod = subdomain).
+  env_domain = var.env_domain != "" ? var.env_domain : (var.environment == "production" ? var.ses_domain : "${local.env_short_full}.${var.ses_domain}")
 
   # Full env word used in DNS names (staging/dev, not the short "stg").
   env_short_full = var.environment == "staging" ? "staging" : "dev"
@@ -181,14 +182,16 @@ locals {
   # S3 bucket names are GLOBALLY unique across AWS. Production keeps its existing
   # unprefixed names (no data migration); staging/dev are prefixed so all three
   # environments can coexist AND non-prod can never read/write prod objects.
+  # Explicit names from environments/<env>/terraform.tfvars win; otherwise derive
+  # (production unprefixed, non-prod env-prefixed).
   bucket_prefix = var.environment == "production" ? "" : "${local.env_short}-"
   bucket_names = {
-    edge       = "${local.bucket_prefix}zord-edge-ingress"
-    canonical  = "${local.bucket_prefix}zord-intent-engine-canonical"
-    nir        = "${local.bucket_prefix}zord-intent-engine-nir"
-    governance = "${local.bucket_prefix}zord-intent-engine-governance"
-    outcome    = "${local.bucket_prefix}zord-outcome-engine-settlement-ingress"
-    evidence   = "${local.bucket_prefix}zord-evidence-vault"
+    edge       = var.edge_bucket_name != "" ? var.edge_bucket_name : "${local.bucket_prefix}zord-edge-ingress"
+    canonical  = var.canonical_bucket_name != "" ? var.canonical_bucket_name : "${local.bucket_prefix}zord-intent-engine-canonical"
+    nir        = var.nir_bucket_name != "" ? var.nir_bucket_name : "${local.bucket_prefix}zord-intent-engine-nir"
+    governance = var.governance_bucket_name != "" ? var.governance_bucket_name : "${local.bucket_prefix}zord-intent-engine-governance"
+    outcome    = var.outcome_bucket_name != "" ? var.outcome_bucket_name : "${local.bucket_prefix}zord-outcome-engine-settlement-ingress"
+    evidence   = var.evidence_bucket_name != "" ? var.evidence_bucket_name : "${local.bucket_prefix}zord-evidence-vault"
   }
 
   # Kong ALB group per environment. The AWS LB Controller writes this value into
@@ -220,13 +223,14 @@ locals {
     Cluster     = local.cluster_name
   }
 
-  # Non-overlapping CIDRs per environment (see env_cidr_map above) so dev, staging
-  # and production VPCs all coexist safely in the shared account.
-  vpc_cidr      = local.env_cidr_map[var.environment].vpc
-  public1_cidr  = local.env_cidr_map[var.environment].pub1
-  public2_cidr  = local.env_cidr_map[var.environment].pub2
-  private1_cidr = local.env_cidr_map[var.environment].priv1
-  private2_cidr = local.env_cidr_map[var.environment].priv2
+  # Non-overlapping CIDRs per environment. The explicit value from
+  # environments/<env>/terraform.tfvars wins; the env map is the fallback so an
+  # omitted value still resolves correctly.
+  vpc_cidr      = var.vpc_cidr != "" ? var.vpc_cidr : local.env_cidr_map[var.environment].vpc
+  public1_cidr  = var.public1_cidr != "" ? var.public1_cidr : local.env_cidr_map[var.environment].pub1
+  public2_cidr  = var.public2_cidr != "" ? var.public2_cidr : local.env_cidr_map[var.environment].pub2
+  private1_cidr = var.private1_cidr != "" ? var.private1_cidr : local.env_cidr_map[var.environment].priv1
+  private2_cidr = var.private2_cidr != "" ? var.private2_cidr : local.env_cidr_map[var.environment].priv2
 
   # Secret ARNs for External Secrets Operator (all per-service secrets)
   external_secret_arns = [
@@ -417,6 +421,12 @@ module "rds_postgres" {
   instance_class    = var.rds_instance_class
   allocated_storage = var.rds_allocated_storage
   multi_az          = var.rds_multi_az
+
+  # Per-env safety. Production should eventually run with deletion_protection =
+  # true and skip_final_snapshot = false; kept configurable while environments
+  # are still being torn down and rebuilt.
+  deletion_protection = var.rds_deletion_protection
+  skip_final_snapshot = var.rds_skip_final_snapshot
 }
 
 ############################
