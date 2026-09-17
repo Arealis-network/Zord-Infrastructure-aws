@@ -105,8 +105,9 @@ data "aws_acm_certificate" "wildcard" {
 data "aws_lbs" "kong" {
   count = var.enable_cloudfront_edge && var.kong_alb_domain_name == "" ? 1 : 0
 
+  # Per-env group tag so a non-prod apply never discovers production's ALB.
   tags = {
-    "ingress.k8s.aws/stack" = var.kong_alb_stack_tag
+    "ingress.k8s.aws/stack" = local.kong_alb_stack_tag
   }
 }
 
@@ -189,6 +190,17 @@ locals {
     outcome    = "${local.bucket_prefix}zord-outcome-engine-settlement-ingress"
     evidence   = "${local.bucket_prefix}zord-evidence-vault"
   }
+
+  # Kong ALB group per environment. The AWS LB Controller writes this value into
+  # the 'ingress.k8s.aws/stack' tag, which is how we auto-discover the ALB. It MUST
+  # be env-specific: a shared value makes a non-prod apply discover PRODUCTION's
+  # ALB and point that environment's CloudFront at prod Kong.
+  kong_alb_group_map = {
+    production = "zord-shared-alb"
+    staging    = "zord-staging-alb"
+    dev        = "zord-dev-alb"
+  }
+  kong_alb_stack_tag = var.kong_alb_stack_tag != "" ? var.kong_alb_stack_tag : local.kong_alb_group_map[var.environment]
 
   env_short           = local.env_short_map[var.environment]
   cluster_name        = "arealis-zord-${local.env_short}-eks"

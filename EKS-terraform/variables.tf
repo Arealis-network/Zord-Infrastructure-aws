@@ -125,9 +125,9 @@ variable "kong_alb_domain_name" {
 }
 
 variable "kong_alb_stack_tag" {
-  description = "Value of the 'ingress.k8s.aws/stack' tag the AWS LB Controller puts on the shared ALB fronting Kong. Terraform uses this to auto-discover the ALB DNS name — no manual copy needed. For a shared ALB group this is the group name (e.g. 'zord-shared-alb'); for a standalone ingress it is '<namespace>/<ingress-name>' (e.g. 'api-gateway/kong-public')."
+  description = "Override for the 'ingress.k8s.aws/stack' tag on the ALB fronting Kong, used to auto-discover its DNS name. Leave EMPTY to derive it per environment (production=zord-shared-alb, staging=zord-staging-alb, dev=zord-dev-alb) - set it only to pin a specific ALB, e.g. '<namespace>/<ingress-name>'."
   type        = string
-  default     = "zord-shared-alb"
+  default     = ""
 }
 
 variable "argocd_alb_group" {
