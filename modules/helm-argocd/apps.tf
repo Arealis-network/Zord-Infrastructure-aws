@@ -26,20 +26,6 @@ locals {
     backoff = { duration = "10s", factor = 2, maxDuration = "3m" }
   }
 
-  # Auto-sync policy for observability (logging/monitoring/tracing).
-  app_auto_sync_policy = {
-    automated   = { prune = true, selfHeal = true }
-    retry       = local.app_retry
-    syncOptions = local.app_sync_options
-  }
-
-  # Manual policy for platform + kong: NEVER auto-sync, even when
-  # applications_auto_sync = true. Operator syncs these by hand.
-  app_manual_sync_policy = {
-    retry       = local.app_retry
-    syncOptions = local.app_sync_options
-  }
-
   # The five Applications. auto = whether this app auto-syncs; ssa = ServerSideApply.
   helm_application_specs = {
     platform = {
@@ -80,12 +66,15 @@ locals {
       ]
       destination = { server = "https://kubernetes.default.svc", namespace = spec.namespace }
 
-      # platform + kong stay MANUAL always; observability auto-syncs only when enabled.
-      syncPolicy = (spec.auto && var.applications_auto_sync ? (
-        spec.ssa ? merge(local.app_auto_sync_policy, { syncOptions = concat(local.app_sync_options, ["ServerSideApply=true"]) }) : local.app_auto_sync_policy
-        ) : (
-        spec.ssa ? merge(local.app_manual_sync_policy, { syncOptions = concat(local.app_sync_options, ["ServerSideApply=true"]) }) : local.app_manual_sync_policy
-      ))
+      # Every app's syncPolicy has the SAME object shape (automated / retry /
+      # syncOptions) so Terraform's type checker is happy. platform + kong stay
+      # MANUAL always (automated = null); observability auto-syncs only when
+      # applications_auto_sync is enabled. ServerSideApply is appended for SSA apps.
+      syncPolicy = {
+        automated   = (spec.auto && var.applications_auto_sync) ? { prune = true, selfHeal = true } : null
+        retry       = local.app_retry
+        syncOptions = spec.ssa ? concat(local.app_sync_options, ["ServerSideApply=true"]) : local.app_sync_options
+      }
     }
   }
 
