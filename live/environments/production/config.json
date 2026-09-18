@@ -1,0 +1,73 @@
+{
+    "environment": "production",
+    "aws_region": "ap-south-1",
+    "cluster_name": "arealis-zord-prod-eks",
+    "eks_name_prefix": "Arealis zord prod eks",
+    "eks_resource_prefix": "arealis-zord-prod-eks",
+    "vpc_name_prefix": "Arealis zord prod vpc",
+    "vpc_resource_prefix": "arealis-zord-prod-vpc",
+    "node_group_name": "arealis-zord-prod-eks-node-group",
+    "network": {
+        "vpc_cidr": "10.0.0.0/16",
+        "public1_cidr": "10.0.1.0/24",
+        "public2_cidr": "10.0.2.0/24",
+        "private1_cidr": "10.0.3.0/24",
+        "private2_cidr": "10.0.4.0/24",
+        "admin_cidrs": [],
+        "enable_flow_logs": true,
+        "flow_log_retention_days": 30
+    },
+    "dns": {
+        "env_domain": "zordnet.com",
+        "ses_domain": "zordnet.com",
+        "kong_alb_stack_tag": "zord-shared-alb",
+        "argocd_alb_group": "zord-observability"
+    },
+    "buckets": {
+        "edge": "zord-edge-ingress",
+        "canonical": "zord-intent-engine-canonical",
+        "nir": "zord-intent-engine-nir",
+        "governance": "zord-intent-engine-governance",
+        "outcome": "zord-outcome-engine-settlement-ingress",
+        "evidence": "zord-evidence-vault",
+        "force_destroy": true
+    },
+    "rds": {
+        "instance_class": "db.t3.medium",
+        "allocated_storage": 20,
+        "multi_az": false,
+        "engine_version": "16",
+        "deletion_protection": false,
+        "skip_final_snapshot": true
+    },
+    "cluster": {
+        "version": "1.32",
+        "manage_admin_access": true,
+        "endpoint_public_access": true,
+        "public_access_cidrs": [
+            "0.0.0.0/0"
+        ]
+    },
+    "platform": {
+        "app_repo_url": "https://github.com/Arealis-network/Arealis-Zord-intent.git",
+        "external_secrets_namespace": "external-secrets",
+        "external_secrets_service_account": "external-secrets",
+        "application_mode": "legacy",
+        "target_revision": "main",
+        "values_environment": "prod",
+        "application_name_suffix": "prod",
+        "applications_auto_sync": false,
+        "observability_auto_sync_on_apply": false
+    },
+    "ses": {
+        "manage_domain_identity": true,
+        "workload_namespace": "zord",
+        "workload_service_account": "zord-app"
+    },
+    "edge": {
+        "enabled": true,
+        "subdomain": "api",
+        "waf_rate_limit": 2000,
+        "kong_alb_domain_name": ""
+    }
+}

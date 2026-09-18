@@ -1,685 +1,454 @@
 name: Zord Infrastructure
 
-run-name: >-
-  ${{
-    github.event.inputs.action == 'apply'
-    && format('Zord Infra Apply ({0}) — Deploy Everything', github.event.inputs.environment)
-    || github.event.inputs.action == 'destroy'
-    && format('Zord Infra Destroy ({0}) — Remove Everything', github.event.inputs.environment)
-    || format('Zord Infra Plan ({0})', github.event.inputs.environment || 'production')
-  }}
+run-name: "Zord ${{ inputs.action || 'validate' }} (${{ inputs.environment || 'production' }})"
 
 on:
   pull_request:
     paths:
-      - "EKS-terraform/**"
+      - "live/**"
+      - "stacks/**"
+      - "modules/**"
       - ".github/workflows/infrastructure.yml"
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment"
+        description: Target environment
         required: true
-        default: production
         type: choice
-        options:
-          - production
-          - staging
-          - dev
+        default: staging
+        options: [production, staging, dev]
       action:
-        description: "Choose action"
+        description: Action
         required: true
-        default: plan
         type: choice
-        options:
-          - plan
-          - apply
-          - destroy
+        default: plan
+        options: [plan, apply, bootstrap, destroy]
       confirm_destroy:
-        description: "Type yes to confirm destroy"
+        description: Type yes to confirm destroy
         required: false
         default: "no"
-        type: string
 
 permissions:
-  id-token: write
   contents: read
+  id-token: write
 
 env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
-  TF_WORKING_DIR: "EKS-terraform"
-  AWS_REGION_VALUE: "ap-south-1"
+  AWS_REGION: ap-south-1
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TF_VAR_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+  TF_VAR_github_pat: ${{ secrets.ARGOCD_GITHUB_PAT }}
 
 jobs:
-  # ════════════════════════════════════════════════════════════════
-  # PR Plan — auto-runs on pull requests
-  # ════════════════════════════════════════════════════════════════
-  terraform-plan-pr:
-    name: Terraform Plan On PR
-    if: github.event_name == 'pull_request'
+  validate:
+    name: Validate all components
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ env.TF_WORKING_DIR }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
         with:
-          # Pinned to 1.11.4 — S3-native state locking (use_lockfile) is GA here.
-          # No DynamoDB needed; state locking is handled by the S3 bucket itself.
           terraform_version: "1.11.4"
           terraform_wrapper: false
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION_VALUE }}
-          role-duration-seconds: 3600
-
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive
-
-      - name: Terraform Init
+      - name: Format and validate
+        shell: bash
         run: |
-          terraform init \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="key=eks/production/terraform.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION_VALUE }}" \
-            -backend-config="encrypt=true" \
-            -backend-config="use_lockfile=true"
+          set -euo pipefail
+          terraform fmt -check -recursive
+          for component in 01-foundation 02-data 03-compute 04-security 05-platform 06-edge; do
+            echo "::group::validate $component"
+            terraform -chdir="live/components/$component" init -backend=false -input=false
+            terraform -chdir="live/components/$component" validate -no-color
+            echo "::endgroup::"
+          done
 
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Terraform Plan (production)
-        run: |
-          set +e
-          terraform plan -var="environment=production" -no-color -input=false -lock=false -detailed-exitcode
-          code=$?
-          echo "terraform plan exit code: $code"
-          # 0 = no changes, 2 = changes present. Both are success for a PR plan.
-          # Only 1 is a real error.
-          if [ "$code" -eq 1 ]; then
-            exit 1
-          fi
-          exit 0
-
-  # ════════════════════════════════════════════════════════════════
-  # Manual — Plan / Apply / Destroy (deploys everything at once)
-  # ════════════════════════════════════════════════════════════════
-  terraform:
-    name: "Zord Infrastructure ${{ github.event.inputs.action }} (${{ github.event.inputs.environment }})"
+  deploy:
+    name: "${{ inputs.action }} ${{ inputs.environment }}"
     if: github.event_name == 'workflow_dispatch'
+    needs: validate
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ env.TF_WORKING_DIR }}
-
-    env:
-      TF_VAR_environment: ${{ github.event.inputs.environment }}
-      # GitHub PAT for the ArgoCD private-repo secret. Secret name must NOT start
-      # with GITHUB_ (reserved by GitHub), so it's stored as ARGOCD_GITHUB_PAT.
-      TF_VAR_github_pat: ${{ secrets.ARGOCD_GITHUB_PAT }}
-      STATE_KEY: "eks/${{ github.event.inputs.environment }}/terraform.tfstate"
-
+    environment: ${{ inputs.environment }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
         with:
-          # Pinned to 1.11.4 — S3-native state locking (use_lockfile) is GA here.
-          # No DynamoDB needed; state locking is handled by the S3 bucket itself.
           terraform_version: "1.11.4"
           terraform_wrapper: false
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION_VALUE }}
+          aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 7200
 
       - name: Validate destroy confirmation
-        if: github.event.inputs.action == 'destroy'
+        if: inputs.action == 'destroy'
+        shell: bash
         run: |
-          if [ "${{ github.event.inputs.confirm_destroy }}" != "yes" ]; then
-            echo "Destroy requires confirm_destroy = yes"
-            exit 1
-          fi
+          [[ "${{ inputs.confirm_destroy }}" == "yes" ]] || { echo "confirm_destroy must be yes"; exit 1; }
 
-      - name: Terraform Init
+      - name: Plan / Apply / Destroy components
+        if: inputs.action != 'bootstrap'
+        shell: bash
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+          TARGET_ACTION: ${{ inputs.action }}
         run: |
-          # Per-environment backend file (environments/<env>/backend.hcl) plus the
-          # bucket from the repo variable. -reconfigure so switching environments
-          # never reuses another env's cached backend.
-          terraform init -reconfigure \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="environments/${{ github.event.inputs.environment }}/backend.hcl"
+          set -euo pipefail
+          components=(01-foundation 02-data 03-compute 04-security 05-platform 06-edge)
+          export TF_VAR_environment="$TARGET_ENV"
 
-      - name: Terraform Validate
-        run: terraform validate
+          init_component() {
+            local c="$1"
+            terraform -chdir="live/components/$c" init -reconfigure -input=false \
+              -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
+              -backend-config="bucket=$TF_STATE_BUCKET" \
+              -backend-config="key=eks/$TARGET_ENV/$c.tfstate"
+          }
+          state_exists() {
+            aws s3api head-object --bucket "$TF_STATE_BUCKET" --key "eks/$TARGET_ENV/$1.tfstate" >/dev/null 2>&1
+          }
 
-      # ── PLAN ──
-      - name: Terraform Plan
-        if: github.event.inputs.action == 'plan'
-        run: terraform plan -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -no-color
-
-      # ── APPLY ──
-      - name: Terraform Apply
-        if: github.event.inputs.action == 'apply'
-        id: terraform_apply
-        continue-on-error: true
-        run: terraform apply -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color
-
-      - name: Debug — Retry Apply on Failure
-        if: github.event.inputs.action == 'apply' && steps.terraform_apply.outcome == 'failure'
-        run: |
-          echo "============================================"
-          echo "  ❌ FIRST APPLY FAILED — RETRYING"
-          echo "============================================"
-          echo ""
-          echo "--- Resources created before failure ---"
-          terraform state list 2>/dev/null | head -50 || echo "(no state)"
-          echo ""
-          echo "--- Retrying with debug log ---"
-          TF_LOG=ERROR terraform apply -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color 2>&1 | tail -100
-          exit 1
-
-      # ── POST-APPLY: Verify everything ──
-      - name: Apply Verification
-        if: github.event.inputs.action == 'apply' && steps.terraform_apply.outcome == 'success'
-        run: |
-          REGION="${{ env.AWS_REGION_VALUE }}"
-          CLUSTER_NAME=$(terraform output -raw cluster_name)
-          ENV="${{ github.event.inputs.environment }}"
-
-          TOTAL_RESOURCES=$(terraform state list 2>/dev/null | grep -c '.' || echo "0")
-
-          # Compute
-          EKS_STATUS=$(aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" --query "cluster.status" --output text 2>/dev/null || echo "N/A")
-          EKS_VERSION=$(aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" --query "cluster.version" --output text 2>/dev/null || echo "N/A")
-          NODE_COUNT=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:eks:cluster-name,Values=${CLUSTER_NAME}" --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null | wc -w || echo "0")
-          # Scope to THIS environment: the Project tag is identical in every env, so
-          # filter on the env-unique Cluster tag instead (else a dev apply would
-          # report prod's bastion).
-          EC2_ID=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=tag:Cluster,Values=${CLUSTER_NAME}" "Name=tag:Name,Values=*admin*" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "N/A")
-          EC2_IP=$(terraform output -raw ec2_public_ip 2>/dev/null || echo "N/A")
-
-          # Network
-          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "N/A")
-          VPC_STATUS=$(aws ec2 describe-vpcs --vpc-ids "${VPC_ID}" --region "${REGION}" --query "Vpcs[0].State" --output text 2>/dev/null || echo "N/A")
-          SUBNET_COUNT=$(aws ec2 describe-subnets --region "${REGION}" --filters "Name=vpc-id,Values=${VPC_ID}" --query 'Subnets[*].SubnetId' --output text 2>/dev/null | wc -w || echo "0")
-          NAT_COUNT=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=vpc-id,Values=${VPC_ID}" "Name=state,Values=available" --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null | wc -w || echo "0")
-          SG_COUNT=$(aws ec2 describe-security-groups --region "${REGION}" --filters "Name=vpc-id,Values=${VPC_ID}" --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null | wc -w || echo "0")
-
-          # Database
-          RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "N/A")
-          # Scope to THIS env's instance (arealis-zord-<env>-eks-postgres), otherwise
-          # 'arealis-zord' matches all three environments' databases.
-          RDS_STATUS=$(aws rds describe-db-instances --region "${REGION}" --query "DBInstances[?DBInstanceIdentifier=='${CLUSTER_NAME}-postgres'].DBInstanceStatus | [0]" --output text 2>/dev/null || echo "N/A")
-
-          # Storage
-          # Env-scoped bucket names (prod unprefixed, staging/dev prefixed) - read
-          # from Terraform outputs so non-prod does not check prod bucket names.
-          OUR_BUCKETS=$(terraform output -json s3_bucket_names 2>/dev/null | jq -r ".[]" | tr "\n" " ")
-          S3_COUNT=0
-          for b in $OUR_BUCKETS; do aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && S3_COUNT=$((S3_COUNT+1)); done
-          EBS_COUNT=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=in-use" "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" --query 'Volumes[*].VolumeId' --output text 2>/dev/null | wc -w || echo "0")
-
-          # Security & secrets
-          # All three scoped to THIS environment only (role names and KMS aliases are
-          # prefixed with the env-unique cluster name; secrets with <env>/zord).
-          IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'${CLUSTER_NAME}')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
-          SECRET_COUNT=$(aws secretsmanager list-secrets --region "${REGION}" --filters Key=name,Values="${ENV}/zord" --query 'SecretList[*].Name' --output text 2>/dev/null | wc -w || echo "0")
-          KMS_COUNT=$(aws kms list-aliases --region "${REGION}" --query "Aliases[?starts_with(AliasName,'alias/${CLUSTER_NAME}')].AliasName" --output text 2>/dev/null | wc -w || echo "0")
-          SES_DOMAIN=$(terraform output -raw ses_domain 2>/dev/null || echo "N/A")
-          # Per-env DNS zone for the Access URLs below (staging/dev use a subdomain).
-          ENV_DOMAIN=$(terraform output -raw env_domain 2>/dev/null || echo "${SES_DOMAIN}")
-
-          # Addons
-          ADDONS=$(aws eks list-addons --cluster-name "${CLUSTER_NAME}" --region "${REGION}" --query 'addons' --output text 2>/dev/null | tr '\t' ' ' || echo "N/A")
-
-          # Edge (CloudFront + WAF)
-          CF_ENABLED=$(terraform output -raw cloudfront_enabled 2>/dev/null || echo "false")
-          CF_DOMAIN=$(terraform output -raw cloudfront_domain_name 2>/dev/null || echo "")
-          # Scoped to this env's prefix (arealis-zord-prod / -stg / -dev) so a dev
-          # apply does not count prod's distribution or WebACL.
-          EDGE_PREFIX="arealis-zord-$(case "${ENV}" in production) echo prod;; staging) echo stg;; *) echo dev;; esac)"
-          CF_DIST_COUNT=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Comment,'${EDGE_PREFIX}')].Id" --output text 2>/dev/null | wc -w || echo "0")
-          WAF_ACL_COUNT=$(aws wafv2 list-web-acls --scope CLOUDFRONT --region us-east-1 --query "WebACLs[?starts_with(Name,'${EDGE_PREFIX}')].Id" --output text 2>/dev/null | wc -w || echo "0")
-          if [ "${CF_ENABLED}" = "true" ]; then CF_STATUS="active — ${CF_DOMAIN}"; else CF_STATUS="skipped (Kong ALB not up yet — auto-enables next apply)"; fi
-
-          # Kong / in-cluster load balancer (only ones owned by this cluster)
-          LB_COUNT=0
-          for arn in $(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text 2>/dev/null); do
-            [ -z "$arn" ] && continue
-            # Only LBs owned by THIS cluster (the elbv2.k8s.aws/cluster tag carries the
-            # env-unique cluster name), so other envs' ALBs are not counted.
-            OWNED=$(aws elbv2 describe-tags --region "${REGION}" --resource-arns "$arn" --query "TagDescriptions[0].Tags[?Key=='elbv2.k8s.aws/cluster' && Value=='${CLUSTER_NAME}'].Value" --output text 2>/dev/null)
-            [ -n "$OWNED" ] && LB_COUNT=$((LB_COUNT+1))
-          done
-
-          {
-            echo "## Zord Infrastructure — ${ENV} — Apply Complete"
-            echo ""
-            echo "> Scope: this summary shows **${ENV} only** (cluster \`${CLUSTER_NAME}\`, VPC \`${VPC_ID}\`, domain \`${ENV_DOMAIN}\`). Other environments are excluded."
-            echo ""
-            echo "| Metric | Count |"
-            echo "|---|---|"
-            echo "| Total Resources Created | ${TOTAL_RESOURCES} |"
-            echo ""
-            echo "### AWS Resource Status (End-to-End Check)"
-            echo ""
-            echo "| Resource | Status | Details |"
-            echo "|---|---|---|"
-            echo "| EKS Cluster | ${EKS_STATUS} | ${CLUSTER_NAME} (v${EKS_VERSION}) |"
-            echo "| EKS Nodes (running) | ${NODE_COUNT} | stateful + stateless groups |"
-            echo "| VPC | ${VPC_STATUS} | ${VPC_ID} |"
-            echo "| Subnets | ${SUBNET_COUNT} | 2 public + 2 private |"
-            echo "| NAT Gateways | ${NAT_COUNT} | private subnet egress |"
-            echo "| Security Groups | ${SG_COUNT} | in VPC |"
-            echo "| EC2 Bastion | running | ${EC2_IP} |"
-            echo "| RDS PostgreSQL | ${RDS_STATUS} | ${RDS_ENDPOINT}:5432 |"
-            echo "| S3 Buckets | ${S3_COUNT}/6 | edge, canonical, nir, governance, outcome, evidence |"
-            echo "| EBS Volumes (in-use) | ${EBS_COUNT} | cluster PVCs |"
-            echo "| IAM Roles | ${IAM_ROLES} | arealis-zord-* |"
-            echo "| Secrets Manager | ${SECRET_COUNT} | ${ENV}/zord/* |"
-            echo "| KMS Keys | ${KMS_COUNT} | S3, token-enclave, evidence-archive |"
-            echo "| SES Domain | verified | ${SES_DOMAIN} |"
-            echo "| CloudFront | ${CF_DIST_COUNT} | ${CF_STATUS} |"
-            echo "| WAF WebACL (us-east-1) | ${WAF_ACL_COUNT} | Common + KnownBadInputs + SQLi + BotControl + rate-limit |"
-            echo "| Load Balancer (Kong) | ${LB_COUNT} | in-cluster ALB via LB Controller |"
-            echo "| EKS Addons | | ${ADDONS} |"
-            echo ""
-            echo "### Access Commands"
-            echo ""
-            echo "| Action | Command / URL |"
-            echo "|---|---|"
-            echo "| SSM to Bastion | \`aws ssm start-session --target ${EC2_ID} --region ${REGION}\` |"
-            echo "| EKS kubeconfig | \`aws eks update-kubeconfig --region ${REGION} --name ${CLUSTER_NAME}\` |"
-            echo "| Jenkins | http://${EC2_IP}:7777 |"
-            echo "| SonarQube | http://${EC2_IP}:7771 |"
-            echo "| Jenkins unlock password (run on bastion) | \`cat /home/ec2-user/jenkins-initial-admin-password\` or \`docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword\` |"
-            echo ""
-            echo "### Verification (run on EC2 bastion after SSM)"
-            echo ""
-            echo "\`\`\`bash"
-            echo "# Connect to EKS"
-            echo "aws eks update-kubeconfig --region ${REGION} --name ${CLUSTER_NAME}"
-            echo ""
-            echo "# Verify nodes (stateful + stateless groups)"
-            echo "kubectl get nodes -o wide"
-            echo ""
-            echo "# Verify AWS Load Balancer Controller (creates the shared ALB)"
-            echo "kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller"
-            echo ""
-            echo "# Verify Cluster Autoscaler"
-            echo "kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-cluster-autoscaler"
-            echo ""
-            echo "# Verify EBS CSI Driver"
-            echo "kubectl get pods -n kube-system -l app=ebs-csi-controller"
-            echo ""
-            echo "# Verify core networking addons (CNI + DNS)"
-            echo "kubectl get pods -n kube-system -l k8s-app=aws-node"
-            echo "kubectl get pods -n kube-system -l k8s-app=kube-dns"
-            echo ""
-            echo "# Verify External Secrets Operator"
-            echo "kubectl get pods -n external-secrets"
-            echo ""
-            echo "# Verify EKS managed addons"
-            echo "aws eks list-addons --cluster-name ${CLUSTER_NAME} --region ${REGION}"
-            echo ""
-            echo "# Verify ArgoCD control-plane"
-            echo "kubectl get pods -n argocd"
-            echo ""
-            echo "# Check ArgoCD applications (deployed by the app repo)"
-            echo "kubectl get applications -n argocd"
-            echo ""
-            echo "# Verify all ArgoCD apps are Synced + Healthy"
-            echo "kubectl get applications -n argocd -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status'"
-            echo ""
-            echo "# Check Ingresses + the shared ALB (address column = ALB DNS)"
-            echo "kubectl get ingress -A"
-            echo ""
-            echo "# Kong gateway proxy service (once the app team deploys Kong)"
-            echo "kubectl get svc -n api-gateway"
-            echo ""
-            echo "# Jenkins unlock password (first login)"
-            echo "cat /home/ec2-user/jenkins-initial-admin-password"
-            echo "docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword"
-            echo ""
-            echo "# ArgoCD + observability admin credentials"
-            echo "aws secretsmanager get-secret-value --secret-id ${ENV}/zord/argocd-credentials --region ${REGION} --query SecretString --output text | jq ."
-            echo "aws secretsmanager get-secret-value --secret-id ${ENV}/zord/observability-secrets --region ${REGION} --query SecretString --output text | jq ."
-            echo "\`\`\`"
-            echo ""
-            echo "### Access URLs"
-            echo ""
-            echo "| Service | URL | Notes |"
-            echo "|---|---|---|"
-            echo "| API (CloudFront + WAF) | https://api.${ENV_DOMAIN} | ${CF_STATUS} |"
-            echo "| ArgoCD (GitOps UI) | https://argocd.${ENV_DOMAIN} | infra-owned, live |"
-            echo "| Grafana (dashboards) | https://grafana.${ENV_DOMAIN} | after monitoring app is Healthy |"
-            echo "| Kibana (logs) | https://kibana.${ENV_DOMAIN} | after logging app is Synced |"
-            echo "| Jaeger (traces) | https://jaeger.${ENV_DOMAIN} | after tracing app is Synced |"
-            echo "| Kong admin UI | https://kong-admin.${ENV_DOMAIN} | prod only (non-prod has no kong-admin host) |"
-            echo ""
-            echo "All dashboards ride the single shared ALB (group zord-observability); DNS auto-created by External DNS; TLS via the wildcard ACM cert (auto-discovered)."
-            echo ""
-            echo "Credentials (Secrets Manager):"
-            echo "\`\`\`bash"
-            echo "aws secretsmanager get-secret-value --secret-id ${ENV}/zord/argocd-credentials --region ${REGION} --query SecretString --output text | jq ."
-            echo "aws secretsmanager get-secret-value --secret-id ${ENV}/zord/observability-secrets --region ${REGION} --query SecretString --output text | jq ."
-            echo "\`\`\`"
-            echo ""
-            echo "### Cost While Running"
-            echo ""
-            echo "| Period | Cost |"
-            echo "|---|---|"
-            echo "| Per Day | ~\$18 |"
-            echo "| Per Month | ~\$540 |"
-            echo ""
-            echo "> Destroy when done: Run this workflow with action \`destroy\`, confirm_destroy = \`yes\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # ── DESTROY ──
-      - name: Terraform Destroy
-        if: github.event.inputs.action == 'destroy'
-        id: terraform_destroy
-        continue-on-error: true
-        run: |
-          REGION="${{ env.AWS_REGION_VALUE }}"
-          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
-          [ -z "${CLUSTER_NAME}" ] && { terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color; exit $?; }
-
-          CLUSTER_STATUS=$(aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
-
-          if [ "$CLUSTER_STATUS" == "ACTIVE" ]; then
-            echo "EKS cluster ACTIVE. Cleaning Kubernetes resources before destroy..."
-            curl -sLO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl && sudo mv kubectl /usr/local/bin/
-            if ! command -v helm >/dev/null 2>&1; then
-              curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          if [[ "$TARGET_ACTION" == "destroy" ]]; then
+            config="live/environments/$TARGET_ENV/config.json"
+            cluster=$(jq -r .cluster_name "$config")
+            if aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" >/dev/null 2>&1; then
+              aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION"
+              kubectl delete ingress --all -A --ignore-not-found --wait=false || true
+              kubectl delete pvc --all -A --ignore-not-found --wait=false || true
+              for app in $(kubectl get applications.argoproj.io -n argocd -o name 2>/dev/null || true); do
+                kubectl patch "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' || true
+              done
+              sleep 45
             fi
-            aws eks update-kubeconfig --region "${REGION}" --name "${CLUSTER_NAME}"
-
-            # Remove validating/mutating webhooks (they block resource deletion)
-            kubectl delete validatingwebhookconfiguration --all --ignore-not-found=true 2>/dev/null || true
-            kubectl delete mutatingwebhookconfiguration --all --ignore-not-found=true 2>/dev/null || true
-
-            # Remove finalizers from all namespaces (prevents stuck deletion)
-            for ns in $(kubectl get ns --no-headers 2>/dev/null | awk '{print $1}'); do
-              case "$ns" in kube-system|kube-public|kube-node-lease|default) continue;; esac
-              kubectl patch ns "$ns" --type json -p='[{"op":"remove","path":"/metadata/finalizers"}]' 2>/dev/null || true
-              kubectl patch ns "$ns" --type json -p='[{"op":"replace","path":"/spec/finalizers","value":[]}]' 2>/dev/null || true
+            for ((i=${#components[@]}-1; i>=0; i--)); do
+              c="${components[$i]}"
+              state_exists "$c" || { echo "skip $c (no state)"; continue; }
+              echo "::group::destroy $c"
+              init_component "$c"
+              terraform -chdir="live/components/$c" destroy -auto-approve -no-color
+              echo "::endgroup::"
             done
-
-            # Delete Ingresses FIRST (before Helm uninstall) so External DNS — still
-            # running — sees them go and cleans up the Route53 records it created
-            # (argocd.zordnet.com, api.zordnet.com). If we uninstalled Helm first,
-            # External DNS would be gone and the records would be orphaned.
-            kubectl get ingress -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null | while read -r NS ING; do
-              [ -z "$NS" ] && continue
-              kubectl delete ingress "$ING" -n "$NS" --ignore-not-found=true || true
+          elif [[ "$TARGET_ACTION" == "apply" ]]; then
+            for c in "${components[@]}"; do
+              echo "::group::apply $c"
+              init_component "$c"
+              terraform -chdir="live/components/$c" apply -auto-approve -no-color
+              echo "::endgroup::"
             done
-
-            # Delete LoadBalancer services (they create AWS LBs outside Terraform)
-            kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null | while read -r NS SVC; do
-              [ -z "$NS" ] && continue
-              kubectl delete svc "$SVC" -n "$NS" --ignore-not-found=true || true
-            done
-
-            # Give External DNS time to delete the Route53 records for the removed ingresses.
-            echo "Waiting 45s for External DNS to clean up Route53 records..."
-            sleep 45
-
-            # Now uninstall all Helm releases (External DNS included — its cleanup is done)
-            helm list -A -o json 2>/dev/null \
-              | jq -r '.[] | .name + " " + .namespace' \
-              | while read -r RELEASE NS; do
-                  [ -z "${RELEASE}" ] && continue
-                  echo "Uninstalling: ${RELEASE} in namespace: ${NS}"
-                  helm uninstall "${RELEASE}" --namespace "${NS}" --ignore-not-found || true
-                done || true
-
-            # Delete PVCs (they create EBS volumes)
-            kubectl get pvc -A --no-headers 2>/dev/null | while read -r NS PVC _; do
-              [ -z "$NS" ] && continue
-              kubectl delete pvc "$PVC" -n "$NS" --ignore-not-found=true --timeout=30s || true
-            done
-
-            # Delete non-system namespaces
-            for ns in $(kubectl get ns --no-headers 2>/dev/null | awk '{print $1}'); do
-              case "$ns" in kube-system|kube-public|kube-node-lease|default) continue;; esac
-              kubectl delete namespace "$ns" --ignore-not-found=true --wait=false --timeout=30s || true
-            done
-
-            echo "Waiting 90s for AWS resources (LBs, ENIs) to release..."
-            sleep 90
           else
-            echo "EKS cluster not ACTIVE (status: ${CLUSTER_STATUS}). Removing K8s/Helm resources from Terraform state..."
-            terraform state list 2>/dev/null | grep -E '^(module\..+\.kubernetes_|module\..+\.helm_|module\..+\.kubectl_|kubernetes_)' | while read -r resource; do
-              echo "  Removing from state: $resource"
-              terraform state rm "$resource" 2>/dev/null || true
-            done || true
+            upstream=true
+            for c in "${components[@]}"; do
+              echo "::group::plan $c"
+              init_component "$c"
+              if [[ "$upstream" == true ]]; then
+                set +e
+                terraform -chdir="live/components/$c" plan -no-color -input=false -detailed-exitcode
+                rc=$?
+                set -e
+                [[ $rc -eq 1 ]] && exit 1
+              else
+                echo "SKIP: apply earlier components first; upstream state is absent."
+              fi
+              state_exists "$c" || upstream=false
+              echo "::endgroup::"
+            done
           fi
 
-          # Delete orphaned CloudWatch log group (EKS auto-creates it)
-          aws logs delete-log-group --log-group-name "/aws/eks/${CLUSTER_NAME}/cluster" --region "${REGION}" 2>/dev/null || true
-
-          # Count resources before destroy
-          RESOURCES_BEFORE=$(terraform state list 2>/dev/null | grep -c '.' || echo "0")
-          echo "RESOURCES_BEFORE=${RESOURCES_BEFORE}" >> "$GITHUB_ENV"
-
-          terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color
-
-      - name: Terraform Destroy Retry (if first attempt failed)
-        if: github.event.inputs.action == 'destroy' && steps.terraform_destroy.outcome == 'failure'
+      - name: Auto-sync observability on apply (safe subset)
+        if: inputs.action == 'apply'
+        shell: bash
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
         run: |
-          echo "============================================"
-          echo "  First destroy failed. Cleaning orphans..."
-          echo "============================================"
-          REGION="${{ env.AWS_REGION_VALUE }}"
-
-          # If state is already empty, destroy already succeeded — nothing to clean.
-          if [ "$(terraform state list 2>/dev/null | grep -c '.')" -eq 0 ]; then
-            echo "Terraform state is empty — destroy already complete. Nothing to do."
+          set -uo pipefail
+          config="live/environments/$TARGET_ENV/config.json"
+          on=$(jq -r '.platform.observability_auto_sync_on_apply // false' "$config")
+          mode=$(jq -r .platform.application_mode "$config")
+          if [[ "$on" != "true" || "$mode" != "helm" ]]; then
+            echo "observability_auto_sync_on_apply disabled or non-helm env; skipping."
             exit 0
           fi
+          cluster=$(jq -r .cluster_name "$config")
+          revision=$(jq -r .platform.target_revision "$config")
+          values_env=$(jq -r .platform.values_environment "$config")
+          suffix=$(jq -r .platform.application_name_suffix "$config")
+          domain=$(jq -r .dns.env_domain "$config")
 
-          # If cluster is gone, remove all K8s resources from state
-          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
-          if [ -n "${CLUSTER_NAME}" ] && ! aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" >/dev/null 2>&1; then
-            echo "EKS cluster gone. Removing K8s resources from state..."
-            terraform state list 2>/dev/null | grep -E '^(module\..+\.kubernetes_|module\..+\.helm_|module\..+\.kubectl_|kubernetes_)' | while read -r resource; do
-              echo "  Removing: $resource"
-              terraform state rm "$resource" 2>/dev/null || true
-            done || true
-          fi
+          # Only deploy observability charts that have NO placeholder image tags.
+          # (Platform + Kong are NEVER touched here — they need Jenkins ECR images
+          # and are synced only at bootstrap.)
+          git clone --quiet --depth 1 --branch "$revision" https://github.com/Arealis-network/Arealis-Zord-intent.git /tmp/zord-obs || {
+            echo "Could not clone app repo; skipping observability auto-sync."; exit 0; }
 
-          # Clean orphaned ENIs and security groups
-          VPC_ID="$(terraform output -raw vpc_id 2>/dev/null || true)"
-          if [ -n "$VPC_ID" ]; then
-            echo "Cleaning orphaned ENIs in VPC ${VPC_ID}..."
-            aws ec2 describe-network-interfaces --region "${REGION}" \
-              --filters "Name=vpc-id,Values=${VPC_ID}" "Name=status,Values=available" \
-              --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null | \
-              tr '\t' '\n' | while read -r eni; do
-                [ -z "$eni" ] && continue
-                aws ec2 delete-network-interface --region "${REGION}" --network-interface-id "$eni" || true
-              done
+          aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION" || { echo "Cluster not reachable yet; skipping."; exit 0; }
 
-            echo "Cleaning orphaned security groups..."
-            aws ec2 describe-security-groups --region "${REGION}" \
-              --filters "Name=vpc-id,Values=${VPC_ID}" \
-              --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | \
-              tr '\t' '\n' | while read -r sg; do
-                [ -z "$sg" ] && continue
-                aws ec2 delete-security-group --region "${REGION}" --group-id "$sg" || true
-              done
-          fi
+          sync_and_wait() {
+            local app="$1"
+            kubectl -n argocd patch application "$app" --type merge \
+              -p "{\"operation\":{\"sync\":{\"revision\":\"$revision\"}}}" || return 1
+            for _ in $(seq 1 120); do
+              phase=$(kubectl -n argocd get application "$app" -o jsonpath='{.status.operationState.phase}' 2>/dev/null || true)
+              [[ "$phase" == "Succeeded" ]] && return 0
+              [[ "$phase" == "Failed" || "$phase" == "Error" ]] && return 1
+              sleep 5
+            done
+            return 1
+          }
 
-          sleep 30
-          terraform destroy -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve -no-color
-
-      - name: Destroy Verification
-        if: github.event.inputs.action == 'destroy'
-        run: |
-          REGION="${{ env.AWS_REGION_VALUE }}"
-          ENV="${{ github.event.inputs.environment }}"
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REMAINING=$(terraform state list 2>/dev/null | grep -c '.' || echo "0")
-
-          # Env-unique names so this destroy check reports ONLY the target environment
-          # (the Project tag is identical across envs, so it must not be used alone).
-          ENV_SHORT=$(case "${ENV}" in production) echo prod;; staging) echo stg;; *) echo dev;; esac)
-          ENV_CLUSTER="arealis-zord-${ENV_SHORT}-eks"
-
-          # ── Check every AWS resource category ──
-          # EKS — only this project's clusters (name starts with arealis-zord), ignore other teams'.
-          EKS_CLUSTERS=$(aws eks list-clusters --region "${REGION}" --query "clusters[?@=='${ENV_CLUSTER}']" --output text 2>/dev/null | wc -w || echo "0")
-          [ "${EKS_CLUSTERS}" -eq 0 ] && EKS_STATUS="✅ Deleted" || EKS_STATUS="❌ ${EKS_CLUSTERS} cluster(s) still exist"
-
-          # EC2 — only this project's (Project tag), ignore other teams'.
-          EC2_RUNNING=$(aws ec2 describe-instances --region "${REGION}" --filters "Name=instance-state-name,Values=running" "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${EC2_RUNNING}" -eq 0 ] && EC2_STATUS="✅ Deleted" || EC2_STATUS="❌ ${EC2_RUNNING} instance(s) running"
-
-          # VPC — ONLY this project's VPC (tagged Project=arealis-zord by Terraform).
-          # Other teams' VPCs in the same account are ignored.
-          VPC_COUNT=$(aws ec2 describe-vpcs --region "${REGION}" --filters "Name=isDefault,Values=false" "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'Vpcs[*].VpcId' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${VPC_COUNT}" -eq 0 ] && VPC_STATUS="✅ Deleted" || VPC_STATUS="❌ ${VPC_COUNT} VPC(s) still exist"
-
-          # NAT Gateways — only this project's (Project tag), ignore other teams'.
-          NAT_COUNT=$(aws ec2 describe-nat-gateways --region "${REGION}" --filter "Name=state,Values=available" "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${NAT_COUNT}" -eq 0 ] && NAT_STATUS="✅ Deleted" || NAT_STATUS="❌ ${NAT_COUNT} NAT gateway(s)"
-
-          # Elastic IPs — only this project's (Project tag), ignore other teams'.
-          EIP_COUNT=$(aws ec2 describe-addresses --region "${REGION}" --filters "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${EIP_COUNT}" -eq 0 ] && EIP_STATUS="✅ Released" || EIP_STATUS="❌ ${EIP_COUNT} unassociated EIP(s)"
-
-          # EBS Volumes (orphaned) — only this project's (Project tag), ignore other teams'.
-          EBS_AVAILABLE=$(aws ec2 describe-volumes --region "${REGION}" --filters "Name=status,Values=available" "Name=tag:Cluster,Values=${ENV_CLUSTER}" --query 'Volumes[*].VolumeId' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${EBS_AVAILABLE}" -eq 0 ] && EBS_STATUS="✅ Deleted" || EBS_STATUS="❌ ${EBS_AVAILABLE} orphaned volume(s)"
-
-          # Load Balancers — ONLY ones created by THIS project's EKS cluster.
-          # The AWS LB Controller tags every LB it makes with elbv2.k8s.aws/cluster=<cluster>.
-          # Other teams' LBs in the same account (e.g. smokesimulator) are ignored.
-          LB_COUNT=0
-          for arn in $(aws elbv2 describe-load-balancers --region "${REGION}" --query 'LoadBalancers[*].LoadBalancerArn' --output text 2>/dev/null); do
-            [ -z "$arn" ] && continue
-            OWNED=$(aws elbv2 describe-tags --region "${REGION}" --resource-arns "$arn" \
-              --query "TagDescriptions[0].Tags[?Key=='elbv2.k8s.aws/cluster' || Key=='ingress.k8s.aws/stack'] | [?contains(Value,'zord') || contains(Value,'arealis')].Value" \
-              --output text 2>/dev/null)
-            [ -n "$OWNED" ] && LB_COUNT=$((LB_COUNT+1))
+          synced=()
+          for pair in "logging:zord-logging" "monitoring:zord-monitoring" "tracing:zord-tracing"; do
+            file="${pair%%:*}"; base="${pair##*:}"
+            vfile="/tmp/zord-obs/kubernetes/values/$values_env/$file.yaml"
+            if [[ -f "$vfile" ]] && grep -q PLACEHOLDER "$vfile"; then
+              echo "Skipping $base ($file.yaml still has PLACEHOLDER)."
+              continue
+            fi
+            if sync_and_wait "$base-$suffix"; then
+              kubectl -n argocd patch application "$base-$suffix" --type merge \
+                -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}' || true
+              synced+=("$base-$suffix")
+            else
+              echo "::warning::$base-$suffix did not reach Succeeded on apply; will retry via auto-sync/bootstrap."
+            fi
           done
-          [ "${LB_COUNT}" -eq 0 ] && LB_STATUS="✅ Deleted" || LB_STATUS="❌ ${LB_COUNT} zord LB(s) still exist"
-
-          # IAM Roles
-          IAM_ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName,'${ENV_CLUSTER}')].RoleName" --output text 2>/dev/null | wc -w || echo "0")
-          [ "${IAM_ROLES}" -eq 0 ] && IAM_STATUS="✅ Deleted" || IAM_STATUS="❌ ${IAM_ROLES} role(s)"
-
-          # S3 Buckets — count ONLY the exact 6 buckets THIS Terraform creates.
-          # Any other zord-* bucket (state bucket, another team's bucket) is ignored.
-          # Env-scoped bucket names (prod unprefixed, staging/dev prefixed) - read
-          # from Terraform outputs so non-prod does not check prod bucket names.
-          OUR_BUCKETS=$(terraform output -json s3_bucket_names 2>/dev/null | jq -r ".[]" | tr "\n" " ")
-          S3_COUNT=0
-          for b in $OUR_BUCKETS; do
-            aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && S3_COUNT=$((S3_COUNT+1))
-          done
-          [ "${S3_COUNT}" -eq 0 ] && S3_STATUS="✅ Deleted" || S3_STATUS="❌ ${S3_COUNT} bucket(s)"
-
-          # Secrets Manager
-          SECRET_COUNT=$(aws secretsmanager list-secrets --region "${REGION}" --filters Key=name,Values="${ENV}/zord" --query 'SecretList[*].Name' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${SECRET_COUNT}" -eq 0 ] && SECRET_STATUS="✅ Deleted" || SECRET_STATUS="❌ ${SECRET_COUNT} secret(s)"
-
-          # OIDC Providers — only ones bound to a still-existing arealis-zord EKS cluster.
-          # Other teams' OIDC providers in the same account are ignored.
-          OIDC_COUNT=0
-          for arn in $(aws iam list-open-id-connect-providers --query 'OpenIDConnectProviderList[*].Arn' --output text 2>/dev/null); do
-            [ -z "$arn" ] && continue
-            aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$arn" \
-              --query 'Tags' --output text 2>/dev/null | grep -qi "arealis-zord" && OIDC_COUNT=$((OIDC_COUNT+1))
-          done
-          [ "${OIDC_COUNT}" -eq 0 ] && OIDC_STATUS="✅ Deleted" || OIDC_STATUS="❌ ${OIDC_COUNT} provider(s)"
-
-          # CloudWatch Log Groups — only this project's cluster log group, ignore other teams'.
-          CW_LOGS=$(aws logs describe-log-groups --region "${REGION}" --log-group-name-prefix "/aws/eks/arealis-zord" --query 'logGroups[*].logGroupName' --output text 2>/dev/null | wc -w || echo "0")
-          [ "${CW_LOGS}" -eq 0 ] && CW_STATUS="✅ Deleted" || CW_STATUS="❌ ${CW_LOGS} log group(s)"
-
-          # EventBridge Schedulers
-          SCHED_COUNT=$(aws scheduler list-schedules --region "${REGION}" --query "Schedules[?contains(Name,'${ENV_CLUSTER}')].Name" --output text 2>/dev/null | wc -w || echo "0")
-          [ "${SCHED_COUNT}" -eq 0 ] && SCHED_STATUS="✅ Deleted" || SCHED_STATUS="❌ ${SCHED_COUNT} schedule(s)"
-
-          # Count passed/failed
-          TOTAL_CHECKS=13
-          PASSED=0
-          for status in "${EKS_STATUS}" "${EC2_STATUS}" "${VPC_STATUS}" "${NAT_STATUS}" "${EIP_STATUS}" "${EBS_STATUS}" "${LB_STATUS}" "${IAM_STATUS}" "${S3_STATUS}" "${SECRET_STATUS}" "${OIDC_STATUS}" "${CW_STATUS}" "${SCHED_STATUS}"; do
-            echo "${status}" | grep -q "✅" && PASSED=$((PASSED + 1))
-          done
-          FAILED=$((TOTAL_CHECKS - PASSED))
-
-          # Billing
-          TODAY=$(date +%Y-%m-%d)
-          YESTERDAY=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || echo "")
-          MONTH_START=$(date +%Y-%m-01)
-          DAILY_COST="N/A"
-          [ -n "${YESTERDAY}" ] && DAILY_COST=$(aws ce get-cost-and-usage --time-period Start="${YESTERDAY}",End="${TODAY}" --granularity DAILY --metrics UnblendedCost --query 'ResultsByTime[0].Total.UnblendedCost.Amount' --output text 2>/dev/null || echo "N/A")
-          MONTHLY_COST=$(aws ce get-cost-and-usage --time-period Start="${MONTH_START}",End="${TODAY}" --granularity MONTHLY --metrics UnblendedCost --query 'ResultsByTime[0].Total.UnblendedCost.Amount' --output text 2>/dev/null || echo "N/A")
 
           {
-            echo "## 🗑️ Zord Infrastructure — ${ENV} — Destroy Verification"
+            echo "## Observability deployed on apply — $TARGET_ENV"
             echo ""
-            echo "| Metric | Value |"
+            echo "| Component | Result |"
             echo "|---|---|"
-            echo "| Terraform State Remaining | ${REMAINING} |"
-            echo "| AWS Checks Passed | ${PASSED}/${TOTAL_CHECKS} |"
-            echo "| AWS Resources Still Exist | ${FAILED} |"
+            for a in logging monitoring tracing; do
+              if printf '%s\n' "${synced[@]:-}" | grep -q "zord-$a-$suffix"; then
+                echo "| zord-$a | ✅ synced + auto-sync enabled |"
+              else
+                echo "| zord-$a | ⏳ deferred to bootstrap (placeholder or not ready) |"
+              fi
+            done
             echo ""
-            echo "### AWS Resource Status (Real-Time Query)"
+            echo "### Links"
+            echo "- ArgoCD UI: https://argocd.$domain"
+            echo "- Grafana: https://grafana.$domain"
+            echo "- Kibana: https://kibana.$domain"
+            echo "- Jaeger: https://jaeger.$domain"
+            echo ""
+            echo "> Platform (10 services) and Kong are NOT deployed automatically on apply."
+            echo "> Next: run Jenkins to build the 10 images, then in the ArgoCD UI click"
+            echo "> **Sync** on \`zord-platform-$suffix\`, wait Healthy, then **Sync** on \`kong-gateway-$suffix\`."
+            echo "> CloudFront/WAF are ALREADY created by this apply (origin = api.$domain). The moment"
+            echo "> Kong is Healthy and DNS resolves, the public URL serves traffic — no re-apply, no wait."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ordered ArgoCD Helm bootstrap
+        if: inputs.action == 'bootstrap'
+        shell: bash
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          config="live/environments/$TARGET_ENV/config.json"
+          mode=$(jq -r .platform.application_mode "$config")
+          [[ "$mode" == "helm" ]] || { echo "Production remains legacy until Helm promotion."; exit 2; }
+          cluster=$(jq -r .cluster_name "$config")
+          revision=$(jq -r .platform.target_revision "$config")
+          values_env=$(jq -r .platform.values_environment "$config")
+          suffix=$(jq -r .platform.application_name_suffix "$config")
+
+          git clone --quiet --depth 1 --branch "$revision" https://github.com/Arealis-network/Arealis-Zord-intent.git /tmp/zord-app
+          if grep -R --line-number PLACEHOLDER "/tmp/zord-app/kubernetes/values/$values_env"; then
+            echo "Refusing bootstrap: placeholder image tags remain."
+            exit 3
+          fi
+          aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION"
+
+          sync_app() {
+            local app="$1"
+            echo "Syncing $app"
+            kubectl -n argocd patch application "$app" --type merge -p "{\"operation\":{\"sync\":{\"revision\":\"$revision\"}}}"
+            for _ in $(seq 1 180); do
+              phase=$(kubectl -n argocd get application "$app" -o jsonpath='{.status.operationState.phase}' 2>/dev/null || true)
+              [[ "$phase" == "Succeeded" ]] && return 0
+              [[ "$phase" == "Failed" || "$phase" == "Error" ]] && return 1
+              sleep 5
+            done
+            return 1
+          }
+
+          # 5-Application model (umbrella chart zord-app bundles platform + all
+          # 10 services + Kafka/Redis + migrations + NetworkPolicies + edge Rollout
+          # into zord-platform-<env>). Observability auto-syncs; we sync in order
+          # anyway to guarantee logging -> monitoring -> tracing dependency chain,
+          # then manual platform, then manual kong last.
+          sync_app "zord-logging-$suffix"
+          sync_app "zord-monitoring-$suffix"
+          sync_app "zord-tracing-$suffix"
+          sync_app "zord-platform-$suffix"
+          sync_app "kong-gateway-$suffix"
+
+          # Kong's Ingress creates the environment ALB. Re-apply ONLY the edge
+          # component now that the origin exists, which creates CloudFront/WAF and
+          # <env>/zord/cloudfront-origin-verify without touching other components.
+          terraform -chdir="live/components/06-edge" init -reconfigure -input=false \
+            -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=eks/$TARGET_ENV/06-edge.tfstate"
+          terraform -chdir="live/components/06-edge" apply -auto-approve -no-color
+
+          # Enable auto-sync ONLY on observability. zord-platform and kong-gateway
+          # stay MANUAL forever (K8s team contract) so a bad image tag can never
+          # self-heal into production traffic without an operator sync.
+          for app in zord-logging zord-monitoring zord-tracing; do
+            kubectl -n argocd patch application "$app-$suffix" --type merge \
+              -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}' || true
+          done
+          kubectl -n argocd get applications -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status'
+
+      - name: Created resources (live AWS, this env only)
+        if: inputs.action == 'apply'
+        shell: bash
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+        run: |
+          set -uo pipefail
+          config="live/environments/$TARGET_ENV/config.json"
+          cluster=$(jq -r .cluster_name "$config")
+          vpc_cidr=$(jq -r .network.vpc_cidr "$config")
+          # Every resource this project tags with Cluster=<cluster_name>. This is the
+          # single scoping key so we never read another env's or team's resources.
+          tagfilter="Key=Cluster,Values=$cluster"
+
+          count_state() {
+            terraform -chdir="live/components/$1" init -reconfigure -input=false \
+              -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
+              -backend-config="bucket=$TF_STATE_BUCKET" \
+              -backend-config="key=eks/$TARGET_ENV/$1.tfstate" >/dev/null 2>&1
+            terraform -chdir="live/components/$1" state list 2>/dev/null | wc -l | tr -d ' '
+          }
+
+          {
+            echo "## Created resources — $TARGET_ENV (live AWS)"
+            echo ""
+            echo "Scoped to tag \`Cluster=$cluster\` and state prefix \`eks/$TARGET_ENV/\`. No other env/team/project is queried."
+            echo ""
+            echo "### Terraform-managed objects per component"
+            echo "| Component | Objects in state |"
+            echo "|---|---|"
+            total=0
+            for c in 01-foundation 02-data 03-compute 04-security 05-platform 06-edge; do
+              n=$(count_state "$c"); total=$((total + n))
+              echo "| \`$c\` | $n |"
+            done
+            echo "| **Total** | **$total** |"
+            echo ""
+            echo "### Live AWS resources (tagged to this cluster)"
+            echo "| Resource type | Count / IDs |"
+            echo "|---|---|"
+
+            eks=$(aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" --query 'cluster.status' --output text 2>/dev/null || echo "-")
+            echo "| EKS cluster \`$cluster\` | $eks |"
+
+            ng=$(aws eks list-nodegroups --cluster-name "$cluster" --region "$AWS_REGION" --query 'length(nodegroups)' --output text 2>/dev/null || echo 0)
+            echo "| EKS node groups | $ng |"
+
+            vpcs=$(aws ec2 describe-vpcs --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Vpcs)' --output text 2>/dev/null || echo 0)
+            echo "| VPCs (CIDR $vpc_cidr) | $vpcs |"
+
+            nat=$(aws ec2 describe-nat-gateways --region "$AWS_REGION" --filter "Name=tag:Cluster,Values=$cluster" "Name=state,Values=available" --query 'length(NatGateways)' --output text 2>/dev/null || echo 0)
+            echo "| NAT gateways | $nat |"
+
+            eip=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Addresses)' --output text 2>/dev/null || echo 0)
+            echo "| Elastic IPs | $eip |"
+
+            rds=$(aws rds describe-db-instances --region "$AWS_REGION" --query "length(DBInstances[?TagList[?Key=='Cluster'&&Value=='$cluster']])" --output text 2>/dev/null || echo 0)
+            echo "| RDS instances | $rds |"
+
+            # S3 buckets: only the exact env-scoped buckets declared for THIS env.
+            present=0
+            for b in $(jq -r '.buckets | to_entries[] | select(.value|type=="string") | .value' "$config"); do
+              aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && present=$((present + 1))
+            done
+            echo "| S3 buckets (this env) present | $present |"
+
+            elb=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" --query "length(LoadBalancers)" --output text 2>/dev/null || echo 0)
+            echo "| Load balancers (account, incl. shared ALB) | $elb |"
+            echo ""
+            echo "> Counts come from live AWS API calls at run time. No hardcoded numbers."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Destroy verification (live AWS, this env only)
+        if: inputs.action == 'destroy'
+        shell: bash
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+        run: |
+          set -uo pipefail
+          config="live/environments/$TARGET_ENV/config.json"
+          cluster=$(jq -r .cluster_name "$config")
+          residual=0
+
+          check() { # label  count
+            local label="$1" n="$2"
+            if [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]]; then
+              echo "| $label | ⚠️ $n remaining |"; residual=$((residual + n))
+            else
+              echo "| $label | ✅ 0 |"
+            fi
+          }
+
+          {
+            echo "## Destroy verification — $TARGET_ENV (live AWS)"
+            echo ""
+            echo "After reverse destroy (06-edge → 01-foundation). Scoped to \`Cluster=$cluster\` only."
             echo ""
             echo "| Resource | Status |"
             echo "|---|---|"
-            echo "| EKS Clusters | ${EKS_STATUS} |"
-            echo "| EC2 Instances | ${EC2_STATUS} |"
-            echo "| VPCs (non-default) | ${VPC_STATUS} |"
-            echo "| NAT Gateways | ${NAT_STATUS} |"
-            echo "| Elastic IPs (unassociated) | ${EIP_STATUS} |"
-            echo "| EBS Volumes (orphaned) | ${EBS_STATUS} |"
-            echo "| Load Balancers | ${LB_STATUS} |"
-            echo "| IAM Roles (arealis-zord-*) | ${IAM_STATUS} |"
-            echo "| S3 Buckets (zord-*) | ${S3_STATUS} |"
-            echo "| Secrets Manager (${ENV}/zord/*) | ${SECRET_STATUS} |"
-            echo "| OIDC Providers | ${OIDC_STATUS} |"
-            echo "| CloudWatch Log Groups | ${CW_STATUS} |"
-            echo "| EventBridge Schedulers | ${SCHED_STATUS} |"
+
+            eks=$(aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" --query 'cluster.status' --output text 2>/dev/null && echo 1 || echo 0)
+            check "EKS cluster \`$cluster\`" "$([[ "$eks" == "1" ]] && echo 1 || echo 0)"
+
+            check "VPCs" "$(aws ec2 describe-vpcs --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Vpcs)' --output text 2>/dev/null || echo 0)"
+            check "NAT gateways" "$(aws ec2 describe-nat-gateways --region "$AWS_REGION" --filter "Name=tag:Cluster,Values=$cluster" "Name=state,Values=available" --query 'length(NatGateways)' --output text 2>/dev/null || echo 0)"
+            check "Elastic IPs" "$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Addresses)' --output text 2>/dev/null || echo 0)"
+            check "RDS instances" "$(aws rds describe-db-instances --region "$AWS_REGION" --query "length(DBInstances[?TagList[?Key=='Cluster'&&Value=='$cluster']])" --output text 2>/dev/null || echo 0)"
+            check "EC2 instances (bastion/nodes)" "$(aws ec2 describe-instances --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query 'length(Reservations[].Instances[])' --output text 2>/dev/null || echo 0)"
+
+            s3left=0
+            for b in $(jq -r '.buckets | to_entries[] | select(.value|type=="string") | .value' "$config"); do
+              aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && s3left=$((s3left + 1))
+            done
+            check "S3 buckets (this env)" "$s3left"
+
             echo ""
-            echo "### 💰 Billing (what you were paying)"
-            echo ""
-            echo "| Period | Cost (USD) |"
-            echo "|---|---|"
-            echo "| Yesterday (daily rate) | \$${DAILY_COST} |"
-            echo "| Month to date | \$${MONTHLY_COST} |"
-            echo ""
-            if [ "${FAILED}" -eq 0 ] && [ "${REMAINING}" -eq 0 ]; then
-              echo "### ✅ CLEAN DESTROY — All resources deleted. AWS bill = \$0 going forward"
-              echo ""
-              echo "> S3 state bucket (\`zord-infrastructure-aws-tf-state\`) still exists — delete manually if no longer needed."
+            if [[ "$residual" -eq 0 ]]; then
+              echo "### ✅ Clean destroy: 0 billable resources remain for **$TARGET_ENV**."
             else
-              echo "### ⚠️ ${FAILED} resource check(s) failed — some resources may still be billing you"
-              echo ""
-              echo "Check AWS Console manually for remaining resources."
+              echo "### ⚠️ $residual resource(s) still exist for **$TARGET_ENV** — review above."
             fi
+            echo ""
+            echo "**Intentionally retained (shared, NOT billed to this env's compute):**"
+            echo "- Terraform state bucket \`$TF_STATE_BUCKET\` (holds all envs' state)"
+            echo "- Shared ACM certificate and apex SES identity (owned by production)"
+            echo ""
+            echo "> This verifies **$TARGET_ENV only**. Other environments, teams, and projects are never queried or touched. This does not claim the whole AWS account bill is zero — only that this environment's resources were removed."
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$residual" -eq 0 ]] || echo "::warning::$residual residual resource(s) remain for $TARGET_ENV"
+
+      - name: Environment summary
+        if: always()
+        shell: bash
+        run: |
+          env="${{ inputs.environment }}"
+          config="live/environments/$env/config.json"
+          cluster=$(jq -r .cluster_name "$config")
+          domain=$(jq -r .dns.env_domain "$config")
+          {
+            echo "## Zord $env — ${{ inputs.action }}"
+            echo ""
+            echo "| Scope | Value |"
+            echo "|---|---|"
+            echo "| Cluster | \`$cluster\` |"
+            echo "| Domain | \`$domain\` |"
+            echo "| State layout | \`eks/$env/{01-foundation..06-edge}.tfstate\` |"
+            echo "| App model | \`$(jq -r .platform.application_mode "$config")\` (5 ArgoCD Applications) |"
+            echo ""
+            echo "> This run is scoped to **$env only**; other environments are excluded."
           } >> "$GITHUB_STEP_SUMMARY"

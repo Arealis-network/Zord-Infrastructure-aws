@@ -83,7 +83,7 @@ resource "terraform_data" "cidr_guard" {
         "It overlaps these existing VPC(s) in ${var.aws_region}:",
         join("\n", [for c in local.guard_conflicts : "  - ${c}"]),
         "",
-        "Fix: pick a free /16 and set it in local.env_cidr_map in EKS-terraform/main.tf",
+        "Fix: pick a free /16 and set network.vpc_cidr in live/environments/<env>/config.json",
         "(current map: production=10.0.0.0/16, staging=10.1.0.0/16, dev=10.2.0.0/16).",
         "List what is already allocated with:",
         "  aws ec2 describe-vpcs --region ${var.aws_region} --query 'Vpcs[].{ID:VpcId,CIDR:CidrBlock}' --output table",

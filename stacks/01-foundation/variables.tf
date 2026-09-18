@@ -1,0 +1,16 @@
+variable "environment" { type = string }
+variable "aws_region" { type = string }
+variable "cluster_name" { type = string }
+variable "vpc_name_prefix" { type = string }
+variable "vpc_resource_prefix" { type = string }
+variable "eks_name_prefix" { type = string }
+variable "eks_resource_prefix" { type = string }
+variable "vpc_cidr" { type = string }
+variable "public1_cidr" { type = string }
+variable "public2_cidr" { type = string }
+variable "private1_cidr" { type = string }
+variable "private2_cidr" { type = string }
+variable "availability_zones" { type = list(string) }
+variable "admin_cidrs" { type = list(string) }
+variable "enable_flow_logs" { type = bool }
+variable "flow_log_retention_days" { type = number }

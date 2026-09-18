@@ -1,0 +1,73 @@
+{
+    "environment": "staging",
+    "aws_region": "ap-south-1",
+    "cluster_name": "arealis-zord-stg-eks",
+    "eks_name_prefix": "Arealis zord stg eks",
+    "eks_resource_prefix": "arealis-zord-stg-eks",
+    "vpc_name_prefix": "Arealis zord stg vpc",
+    "vpc_resource_prefix": "arealis-zord-stg-vpc",
+    "node_group_name": "arealis-zord-stg-eks-node-group",
+    "network": {
+        "vpc_cidr": "10.1.0.0/16",
+        "public1_cidr": "10.1.1.0/24",
+        "public2_cidr": "10.1.2.0/24",
+        "private1_cidr": "10.1.3.0/24",
+        "private2_cidr": "10.1.4.0/24",
+        "admin_cidrs": [],
+        "enable_flow_logs": true,
+        "flow_log_retention_days": 30
+    },
+    "dns": {
+        "env_domain": "staging.zordnet.com",
+        "ses_domain": "zordnet.com",
+        "kong_alb_stack_tag": "zord-staging-alb",
+        "argocd_alb_group": "zord-staging-alb"
+    },
+    "buckets": {
+        "edge": "stg-zord-edge-ingress",
+        "canonical": "stg-zord-intent-engine-canonical",
+        "nir": "stg-zord-intent-engine-nir",
+        "governance": "stg-zord-intent-engine-governance",
+        "outcome": "stg-zord-outcome-engine-settlement-ingress",
+        "evidence": "stg-zord-evidence-vault",
+        "force_destroy": true
+    },
+    "rds": {
+        "instance_class": "db.t3.medium",
+        "allocated_storage": 20,
+        "multi_az": false,
+        "engine_version": "16",
+        "deletion_protection": false,
+        "skip_final_snapshot": true
+    },
+    "cluster": {
+        "version": "1.32",
+        "manage_admin_access": true,
+        "endpoint_public_access": true,
+        "public_access_cidrs": [
+            "0.0.0.0/0"
+        ]
+    },
+    "platform": {
+        "app_repo_url": "https://github.com/Arealis-network/Arealis-Zord-intent.git",
+        "external_secrets_namespace": "external-secrets",
+        "external_secrets_service_account": "external-secrets",
+        "application_mode": "helm",
+        "target_revision": "staging",
+        "values_environment": "staging",
+        "application_name_suffix": "staging",
+        "applications_auto_sync": false,
+        "observability_auto_sync_on_apply": true
+    },
+    "ses": {
+        "manage_domain_identity": false,
+        "workload_namespace": "zord",
+        "workload_service_account": "zord-app"
+    },
+    "edge": {
+        "enabled": true,
+        "subdomain": "api",
+        "waf_rate_limit": 2000,
+        "kong_alb_domain_name": ""
+    }
+}

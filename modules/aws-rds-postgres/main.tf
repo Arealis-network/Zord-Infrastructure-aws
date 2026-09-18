@@ -72,18 +72,13 @@ resource "aws_security_group" "rds" {
   description = "RDS Postgres - allow 5432 only from the EKS cluster"
   vpc_id      = var.vpc_id
 
-  # Allow 5432 from the EKS cluster SG (pods/nodes carry this SG by default).
-  # SEC H3: 5432 only from the EKS cluster SG (pods/nodes). Removed the broad
-  # VPC-CIDR rule that also exposed the DB to the public subnets + bastion.
-  ingress {
-    description     = "Postgres from EKS cluster SG"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [var.cluster_security_group_id]
-  }
+  # NOTE: the "5432 from the EKS cluster SG" rule is NOT inline here. The cluster
+  # SG does not exist when the data tier is created (02-data runs before
+  # 03-compute), and inline ingress blocks cannot be made conditional. It is
+  # created as a separate aws_security_group_rule below, guarded by a variable.
+  # The private-subnet rule that follows already covers pods and nodes.
 
-  # Also allow the private-subnet CIDRs (where nodes/pods run) in case pods use the
+  # Allow the private-subnet CIDRs (where nodes/pods run) in case pods use the
   # node SG rather than the cluster SG. Private subnets only — never public.
   ingress {
     description = "Postgres from private subnets (nodes/pods)"
@@ -211,4 +206,24 @@ resource "aws_secretsmanager_secret_version" "db_connection" {
     # DB to scrape instance-wide metrics. Uses the master user (single-user model).
     POSTGRES_EXPORTER_DSN = "postgres://${var.master_username}:${random_password.master.result}@${aws_db_instance.this.address}:5432/postgres?sslmode=require"
   })
+}
+
+# ─────────────────────────────────────────
+# Postgres ingress from the EKS cluster security group.
+#
+# Separate resource (not an inline ingress block) so it can be created only once
+# the cluster exists. 02-data creates the instance with cluster_security_group_id
+# empty; 03-compute passes the real SG and this rule is added.
+# ─────────────────────────────────────────
+
+resource "aws_security_group_rule" "postgres_from_cluster_sg" {
+  count = var.cluster_security_group_id != "" ? 1 : 0
+
+  description              = "Postgres from EKS cluster SG"
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds.id
+  source_security_group_id = var.cluster_security_group_id
 }

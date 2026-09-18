@@ -28,6 +28,12 @@ variable "ses_domain" {
   type        = string
 }
 
+variable "manage_domain_identity" {
+  description = "Create/manage the account-level SES apex identity, DKIM and MAIL FROM records. Exactly one environment should own these; other environments create only their own send role and reuse the identity."
+  type        = bool
+  default     = true
+}
+
 variable "ses_workload_namespace" {
   description = "Kubernetes namespace where the workload that sends emails runs."
   type        = string

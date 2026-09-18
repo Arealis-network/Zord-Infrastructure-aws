@@ -23,6 +23,7 @@ variable "eks_resource_prefix" {
 }
 
 variable "evidence_role_id" {
-  description = "IAM role ID of the existing evidence S3 access role (to attach KMS policy)."
+  description = "IAM role (name/id) of the evidence workload that the KMS policy is attached to. Empty while the role does not exist yet (02-data creates only the key); 04-security supplies it and the policy is then attached."
   type        = string
+  default     = ""
 }

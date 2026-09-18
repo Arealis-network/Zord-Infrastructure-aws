@@ -3,23 +3,28 @@
 ############################
 
 resource "aws_ses_domain_identity" "this" {
+  count  = var.manage_domain_identity ? 1 : 0
   domain = var.ses_domain
 }
 
 resource "aws_ses_domain_dkim" "this" {
-  domain = aws_ses_domain_identity.this.domain
+  count  = var.manage_domain_identity ? 1 : 0
+  domain = aws_ses_domain_identity.this[0].domain
 }
 
 resource "aws_ses_domain_mail_from" "this" {
-  domain           = aws_ses_domain_identity.this.domain
+  count            = var.manage_domain_identity ? 1 : 0
+  domain           = aws_ses_domain_identity.this[0].domain
   mail_from_domain = "mail.${var.ses_domain}"
 }
 
 resource "aws_ses_email_identity" "support" {
+  count = var.manage_domain_identity ? 1 : 0
   email = "support@${var.ses_domain}"
 }
 
 resource "aws_ses_email_identity" "no_reply" {
+  count = var.manage_domain_identity ? 1 : 0
   email = "no-reply@${var.ses_domain}"
 }
 

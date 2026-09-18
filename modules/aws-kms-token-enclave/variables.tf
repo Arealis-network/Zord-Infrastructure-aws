@@ -28,6 +28,13 @@ variable "eks_resource_prefix" {
 }
 
 variable "pod_identity_addon_id" {
-  description = "Pod Identity addon ID (for depends_on)."
-  type        = string
+  description = "Dependency handle on the EKS Pod Identity addon. Empty when create_pod_identity_association is false."
+  type        = any
+  default     = null
+}
+
+variable "create_pod_identity_association" {
+  description = "Whether to create the EKS Pod Identity association. false while the cluster does not exist yet (02-data creates the key+role); true in 04-security once 03-compute has built the cluster."
+  type        = bool
+  default     = true
 }

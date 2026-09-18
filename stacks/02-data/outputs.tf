@@ -1,0 +1,11 @@
+output "s3_bucket_names" { value = module.s3_buckets.bucket_names }
+output "s3_bucket_arns" { value = module.s3_buckets.bucket_arns }
+output "rds_endpoint" { value = module.rds_postgres.endpoint }
+output "rds_instance_id" { value = module.rds_postgres.instance_id }
+output "rds_security_group_id" { value = module.rds_postgres.security_group_id }
+output "rds_master_username" { value = module.rds_postgres.master_username }
+output "evidence_kms_key_arn" { value = module.kms_evidence_archive.kms_key_arn }
+output "evidence_kms_key_id" { value = module.kms_evidence_archive.kms_key_id }
+output "token_enclave_kms_key_arn" { value = module.kms_token_enclave.kms_key_arn }
+output "token_enclave_kms_key_id" { value = module.kms_token_enclave.kms_key_id }
+output "token_enclave_role_arn" { value = module.kms_token_enclave.role_arn }

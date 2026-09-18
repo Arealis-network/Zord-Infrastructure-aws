@@ -24,8 +24,9 @@ variable "private_subnet_ids" {
 }
 
 variable "cluster_security_group_id" {
-  description = "EKS cluster security group. RDS ingress on 5432 is locked to this SG so only the cluster can reach the database."
+  description = "EKS cluster security group. RDS ingress on 5432 is locked to this SG so only the cluster can reach the database. Empty while the cluster does not exist yet (02-data); 03-compute supplies it and the ingress rule is then created."
   type        = string
+  default     = ""
 }
 
 variable "kms_key_arn" {

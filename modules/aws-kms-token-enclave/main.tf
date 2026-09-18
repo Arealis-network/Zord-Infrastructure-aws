@@ -96,7 +96,13 @@ resource "aws_iam_role_policy" "token_enclave_kms" {
 # EKS Pod Identity — binds role to zord-token-enclave SA
 # ─────────────────────────────────────────
 
+# Created only once the cluster + Pod Identity addon exist. In the component
+# layout the KEY and ROLE are created by 02-data (association disabled) and the
+# association is made by 04-security, after 03-compute has built the cluster.
+# This removes the circular dependency between the data and compute components.
 resource "aws_eks_pod_identity_association" "token_enclave" {
+  count = var.create_pod_identity_association ? 1 : 0
+
   cluster_name    = var.cluster_name
   namespace       = "zord"
   service_account = "zord-token-enclave"

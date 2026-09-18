@@ -55,3 +55,39 @@ variable "github_pat" {
   sensitive   = true
   default     = ""
 }
+
+# ── Application source model ──
+variable "application_mode" {
+  description = "ArgoCD Application model: legacy keeps the original manifest-path Applications (production migration safety); helm creates the 5 Helm Applications (zord-platform umbrella + kong + logging + monitoring + tracing)."
+  type        = string
+  default     = "legacy"
+
+  validation {
+    condition     = contains(["legacy", "helm"], var.application_mode)
+    error_message = "application_mode must be legacy or helm."
+  }
+}
+
+variable "app_target_revision" {
+  description = "Git revision ArgoCD watches (staging, master/dev, main/prod, or a custom Jenkins branch)."
+  type        = string
+  default     = "main"
+}
+
+variable "values_environment" {
+  description = "Directory under kubernetes/values (prod, staging, dev)."
+  type        = string
+  default     = "prod"
+}
+
+variable "applications_auto_sync" {
+  description = "Enable automatic sync/prune/self-heal for Helm Applications. Keep false until Jenkins replaces all *-PLACEHOLDER image tags."
+  type        = bool
+  default     = false
+}
+
+variable "application_name_suffix" {
+  description = "Suffix appended to Helm Application names (prod/staging/dev)."
+  type        = string
+  default     = "prod"
+}

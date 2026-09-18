@@ -49,7 +49,13 @@ resource "aws_kms_alias" "evidence_archive" {
 # Only GenerateDataKey + Decrypt + DescribeKey (no Encrypt, no Delete)
 # ─────────────────────────────────────────
 
+# Created only when the evidence role is known. In the component layout the KEY
+# is created by 02-data (where evidence_role_id is empty) and this POLICY is
+# attached by 04-security, which owns the role. Splitting it this way removes the
+# circular dependency between the data and security components.
 resource "aws_iam_role_policy" "evidence_kms" {
+  count = var.evidence_role_id != "" ? 1 : 0
+
   name = "${var.eks_resource_prefix}-evidence-archive-kms-policy"
   role = var.evidence_role_id
 
