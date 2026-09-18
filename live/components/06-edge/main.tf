@@ -17,14 +17,17 @@ provider "aws" {
   default_tags { tags = local.common_tags }
 }
 
-# CloudFront viewer certificate must live in us-east-1. The shared wildcard cert
-# (covers *.zordnet.com incl. every env subdomain) is looked up by the apex SES
-# domain. This exists independently of the cluster/ALB, so edge can be created on
-# the very first apply — no ALB discovery, no waiting.
+# CloudFront viewer certificate must live in us-east-1 AND must cover the exact
+# alias (api.<env_domain>). A wildcard covers only ONE label, so the cert domain
+# is derived from env_domain (never hardcoded):
+#   prod     env_domain=zordnet.com          -> alias api.zordnet.com          -> cert *.zordnet.com
+#   staging  env_domain=staging.zordnet.com  -> alias api.staging.zordnet.com  -> cert *.staging.zordnet.com
+#   dev      env_domain=dev.zordnet.com      -> alias api.dev.zordnet.com      -> cert *.dev.zordnet.com
+# So the ACM lookup domain is exactly env_domain (its *.env_domain wildcard cert).
 data "aws_acm_certificate" "wildcard_us_east_1" {
   count       = local.edge_active ? 1 : 0
   provider    = aws.us_east_1
-  domain      = local.config.dns.ses_domain
+  domain      = local.config.dns.env_domain
   statuses    = ["ISSUED"]
   most_recent = true
 }
