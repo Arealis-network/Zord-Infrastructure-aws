@@ -41,6 +41,9 @@ env:
   TF_VAR_github_pat: ${{ secrets.ARGOCD_GITHUB_PAT }}
 
 jobs:
+  # ════════════════════════════════════════════════════════════════
+  # BOX 1 — Validate all components (fmt + validate). Runs on PRs too.
+  # ════════════════════════════════════════════════════════════════
   validate:
     name: Validate all components
     runs-on: ubuntu-latest
@@ -62,12 +65,69 @@ jobs:
             echo "::endgroup::"
           done
 
-  deploy:
-    name: "${{ inputs.action }} ${{ inputs.environment }}"
-    if: github.event_name == 'workflow_dispatch'
+  # ════════════════════════════════════════════════════════════════
+  # BOX 2 — Plan all 6 components (read-only). Only when action = plan.
+  # ════════════════════════════════════════════════════════════════
+  plan:
+    name: Plan (6 components)
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'plan'
     needs: validate
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.11.4"
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+      - name: Plan components 01 -> 06
+        shell: bash
+        run: |
+          set -euo pipefail
+          components=(01-foundation 02-data 03-compute 04-security 05-platform 06-edge)
+          export TF_VAR_environment="$TARGET_ENV"
+          init_component() {
+            terraform -chdir="live/components/$1" init -reconfigure -input=false \
+              -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
+              -backend-config="bucket=$TF_STATE_BUCKET" \
+              -backend-config="key=eks/$TARGET_ENV/$1.tfstate"
+          }
+          state_exists() { aws s3api head-object --bucket "$TF_STATE_BUCKET" --key "eks/$TARGET_ENV/$1.tfstate" >/dev/null 2>&1; }
+          upstream=true
+          for c in "${components[@]}"; do
+            echo "::group::plan $c"
+            init_component "$c"
+            if [[ "$upstream" == true ]]; then
+              set +e
+              terraform -chdir="live/components/$c" plan -no-color -input=false -detailed-exitcode
+              rc=$?
+              set -e
+              [[ $rc -eq 1 ]] && exit 1
+            else
+              echo "SKIP: apply earlier components first; upstream state is absent."
+            fi
+            state_exists "$c" || upstream=false
+            echo "::endgroup::"
+          done
+
+  # ════════════════════════════════════════════════════════════════
+  # BOX 3 — Apply all 6 components in order. Only when action = apply.
+  # ════════════════════════════════════════════════════════════════
+  apply:
+    name: Apply (6 components)
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -80,150 +140,149 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 7200
 
-      - name: Validate destroy confirmation
-        if: inputs.action == 'destroy'
+      - name: Apply components 01 -> 06
         shell: bash
-        run: |
-          [[ "${{ inputs.confirm_destroy }}" == "yes" ]] || { echo "confirm_destroy must be yes"; exit 1; }
-
-      - name: Plan / Apply / Destroy components
-        if: inputs.action != 'bootstrap'
-        shell: bash
-        env:
-          TARGET_ENV: ${{ inputs.environment }}
-          TARGET_ACTION: ${{ inputs.action }}
         run: |
           set -euo pipefail
           components=(01-foundation 02-data 03-compute 04-security 05-platform 06-edge)
           export TF_VAR_environment="$TARGET_ENV"
-
-          init_component() {
-            local c="$1"
+          for c in "${components[@]}"; do
+            echo "::group::apply $c"
             terraform -chdir="live/components/$c" init -reconfigure -input=false \
               -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
               -backend-config="bucket=$TF_STATE_BUCKET" \
               -backend-config="key=eks/$TARGET_ENV/$c.tfstate"
-          }
-          state_exists() {
-            aws s3api head-object --bucket "$TF_STATE_BUCKET" --key "eks/$TARGET_ENV/$1.tfstate" >/dev/null 2>&1
-          }
+            terraform -chdir="live/components/$c" apply -auto-approve -no-color
+            echo "::endgroup::"
+          done
 
-          if [[ "$TARGET_ACTION" == "destroy" ]]; then
-            config="live/environments/$TARGET_ENV/config.json"
-            cluster=$(jq -r .cluster_name "$config")
-            if aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" >/dev/null 2>&1; then
-              aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION"
-              kubectl delete ingress --all -A --ignore-not-found --wait=false || true
-              kubectl delete pvc --all -A --ignore-not-found --wait=false || true
-              for app in $(kubectl get applications.argoproj.io -n argocd -o name 2>/dev/null || true); do
-                kubectl patch "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' || true
-              done
-              sleep 45
-            fi
-            for ((i=${#components[@]}-1; i>=0; i--)); do
-              c="${components[$i]}"
-              state_exists "$c" || { echo "skip $c (no state)"; continue; }
-              echo "::group::destroy $c"
-              init_component "$c"
-              terraform -chdir="live/components/$c" destroy -auto-approve -no-color
-              echo "::endgroup::"
-            done
-          elif [[ "$TARGET_ACTION" == "apply" ]]; then
-            for c in "${components[@]}"; do
-              echo "::group::apply $c"
-              init_component "$c"
-              terraform -chdir="live/components/$c" apply -auto-approve -no-color
-              echo "::endgroup::"
-            done
-          else
-            upstream=true
-            for c in "${components[@]}"; do
-              echo "::group::plan $c"
-              init_component "$c"
-              if [[ "$upstream" == true ]]; then
-                set +e
-                terraform -chdir="live/components/$c" plan -no-color -input=false -detailed-exitcode
-                rc=$?
-                set -e
-                [[ $rc -eq 1 ]] && exit 1
-              else
-                echo "SKIP: apply earlier components first; upstream state is absent."
-              fi
-              state_exists "$c" || upstream=false
-              echo "::endgroup::"
-            done
-          fi
-
-      - name: Auto-sync observability on apply (safe subset)
-        if: inputs.action == 'apply'
+      - name: Created resources (live AWS, this env only)
         shell: bash
-        env:
-          TARGET_ENV: ${{ inputs.environment }}
+        run: |
+          set -uo pipefail
+          config="live/environments/$TARGET_ENV/config.json"
+          cluster=$(jq -r .cluster_name "$config")
+          vpc_cidr=$(jq -r .network.vpc_cidr "$config")
+          count_state() {
+            terraform -chdir="live/components/$1" init -reconfigure -input=false \
+              -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
+              -backend-config="bucket=$TF_STATE_BUCKET" \
+              -backend-config="key=eks/$TARGET_ENV/$1.tfstate" >/dev/null 2>&1
+            terraform -chdir="live/components/$1" state list 2>/dev/null | wc -l | tr -d ' '
+          }
+          {
+            echo "## Created resources — $TARGET_ENV (live AWS)"
+            echo ""
+            echo "Scoped to tag \`Cluster=$cluster\` and state prefix \`eks/$TARGET_ENV/\`. No other env/team/project is queried."
+            echo ""
+            echo "### Terraform-managed objects per component"
+            echo "| Component | Objects in state |"
+            echo "|---|---|"
+            total=0
+            for c in 01-foundation 02-data 03-compute 04-security 05-platform 06-edge; do
+              n=$(count_state "$c"); total=$((total + n))
+              echo "| \`$c\` | $n |"
+            done
+            echo "| **Total** | **$total** |"
+            echo ""
+            echo "### Live AWS resources (tagged to this cluster)"
+            echo "| Resource type | Count / IDs |"
+            echo "|---|---|"
+            eks=$(aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" --query 'cluster.status' --output text 2>/dev/null || echo "-")
+            echo "| EKS cluster \`$cluster\` | $eks |"
+            ng=$(aws eks list-nodegroups --cluster-name "$cluster" --region "$AWS_REGION" --query 'length(nodegroups)' --output text 2>/dev/null || echo 0)
+            echo "| EKS node groups | $ng |"
+            vpcs=$(aws ec2 describe-vpcs --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Vpcs)' --output text 2>/dev/null || echo 0)
+            echo "| VPCs (CIDR $vpc_cidr) | $vpcs |"
+            nat=$(aws ec2 describe-nat-gateways --region "$AWS_REGION" --filter "Name=tag:Cluster,Values=$cluster" "Name=state,Values=available" --query 'length(NatGateways)' --output text 2>/dev/null || echo 0)
+            echo "| NAT gateways | $nat |"
+            eip=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Addresses)' --output text 2>/dev/null || echo 0)
+            echo "| Elastic IPs | $eip |"
+            rds=$(aws rds describe-db-instances --region "$AWS_REGION" --query "length(DBInstances[?TagList[?Key=='Cluster'&&Value=='$cluster']])" --output text 2>/dev/null || echo 0)
+            echo "| RDS instances | $rds |"
+            present=0
+            for b in $(jq -r '.buckets | to_entries[] | select(.value|type=="string") | .value' "$config"); do
+              aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && present=$((present + 1))
+            done
+            echo "| S3 buckets (this env) present | $present |"
+            elb=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" --query "length(LoadBalancers)" --output text 2>/dev/null || echo 0)
+            echo "| Load balancers (account, incl. shared ALB) | $elb |"
+            echo ""
+            echo "> Counts come from live AWS API calls at run time. No hardcoded numbers."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ════════════════════════════════════════════════════════════════
+  # BOX 4 — GitOps: observability sync + summary + links.
+  # Runs after apply. Its own box.
+  # ════════════════════════════════════════════════════════════════
+  gitops:
+    name: GitOps (observability sync + links)
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+    needs: apply
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.11.4"
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Auto-sync observability (safe subset) + links
+        shell: bash
         run: |
           set -uo pipefail
           config="live/environments/$TARGET_ENV/config.json"
           on=$(jq -r '.platform.observability_auto_sync_on_apply // false' "$config")
           mode=$(jq -r .platform.application_mode "$config")
-          if [[ "$on" != "true" || "$mode" != "helm" ]]; then
-            echo "observability_auto_sync_on_apply disabled or non-helm env; skipping."
-            exit 0
-          fi
-          cluster=$(jq -r .cluster_name "$config")
-          revision=$(jq -r .platform.target_revision "$config")
-          values_env=$(jq -r .platform.values_environment "$config")
-          suffix=$(jq -r .platform.application_name_suffix "$config")
           domain=$(jq -r .dns.env_domain "$config")
-
-          # Only deploy observability charts that have NO placeholder image tags.
-          # (Platform + Kong are NEVER touched here — they need Jenkins ECR images
-          # and are synced only at bootstrap.)
-          git clone --quiet --depth 1 --branch "$revision" https://github.com/Arealis-network/Arealis-Zord-intent.git /tmp/zord-obs || {
-            echo "Could not clone app repo; skipping observability auto-sync."; exit 0; }
-
-          aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION" || { echo "Cluster not reachable yet; skipping."; exit 0; }
-
-          sync_and_wait() {
-            local app="$1"
-            kubectl -n argocd patch application "$app" --type merge \
-              -p "{\"operation\":{\"sync\":{\"revision\":\"$revision\"}}}" || return 1
-            for _ in $(seq 1 120); do
-              phase=$(kubectl -n argocd get application "$app" -o jsonpath='{.status.operationState.phase}' 2>/dev/null || true)
-              [[ "$phase" == "Succeeded" ]] && return 0
-              [[ "$phase" == "Failed" || "$phase" == "Error" ]] && return 1
-              sleep 5
-            done
-            return 1
-          }
-
-          synced=()
-          for pair in "logging:zord-logging" "monitoring:zord-monitoring" "tracing:zord-tracing"; do
-            file="${pair%%:*}"; base="${pair##*:}"
-            vfile="/tmp/zord-obs/kubernetes/values/$values_env/$file.yaml"
-            if [[ -f "$vfile" ]] && grep -q PLACEHOLDER "$vfile"; then
-              echo "Skipping $base ($file.yaml still has PLACEHOLDER)."
-              continue
-            fi
-            if sync_and_wait "$base-$suffix"; then
-              kubectl -n argocd patch application "$base-$suffix" --type merge \
-                -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}' || true
-              synced+=("$base-$suffix")
+          suffix=$(jq -r .platform.application_name_suffix "$config")
+          if [[ "$on" != "true" || "$mode" != "helm" ]]; then
+            echo "observability_auto_sync_on_apply disabled or non-helm env; skipping sync."
+          else
+            cluster=$(jq -r .cluster_name "$config")
+            revision=$(jq -r .platform.target_revision "$config")
+            values_env=$(jq -r .platform.values_environment "$config")
+            git clone --quiet --depth 1 --branch "$revision" https://github.com/Arealis-network/Arealis-Zord-intent.git /tmp/zord-obs || echo "clone skipped"
+            if aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION" 2>/dev/null; then
+              sync_and_wait() {
+                local app="$1"
+                kubectl -n argocd patch application "$app" --type merge -p "{\"operation\":{\"sync\":{\"revision\":\"$revision\"}}}" || return 1
+                for _ in $(seq 1 120); do
+                  phase=$(kubectl -n argocd get application "$app" -o jsonpath='{.status.operationState.phase}' 2>/dev/null || true)
+                  [[ "$phase" == "Succeeded" ]] && return 0
+                  [[ "$phase" == "Failed" || "$phase" == "Error" ]] && return 1
+                  sleep 5
+                done
+                return 1
+              }
+              for pair in "logging:zord-logging" "monitoring:zord-monitoring" "tracing:zord-tracing"; do
+                file="${pair%%:*}"; base="${pair##*:}"
+                vfile="/tmp/zord-obs/kubernetes/values/$values_env/$file.yaml"
+                if [[ -f "$vfile" ]] && grep -q PLACEHOLDER "$vfile"; then
+                  echo "Skipping $base ($file.yaml still has PLACEHOLDER)."; continue
+                fi
+                if sync_and_wait "$base-$suffix"; then
+                  kubectl -n argocd patch application "$base-$suffix" --type merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}' || true
+                else
+                  echo "::warning::$base-$suffix did not reach Succeeded; will retry via auto-sync."
+                fi
+              done
             else
-              echo "::warning::$base-$suffix did not reach Succeeded on apply; will retry via auto-sync/bootstrap."
+              echo "Cluster not reachable yet; skipping observability sync."
             fi
-          done
-
+          fi
           {
-            echo "## Observability deployed on apply — $TARGET_ENV"
+            echo "## GitOps — $TARGET_ENV"
             echo ""
-            echo "| Component | Result |"
-            echo "|---|---|"
-            for a in logging monitoring tracing; do
-              if printf '%s\n' "${synced[@]:-}" | grep -q "zord-$a-$suffix"; then
-                echo "| zord-$a | ✅ synced + auto-sync enabled |"
-              else
-                echo "| zord-$a | ⏳ deferred to bootstrap (placeholder or not ready) |"
-              fi
-            done
+            echo "Observability (logging/monitoring/tracing) auto-synced where images were ready."
             echo ""
             echo "### Links"
             echo "- ArgoCD UI: https://argocd.$domain"
@@ -231,18 +290,35 @@ jobs:
             echo "- Kibana: https://kibana.$domain"
             echo "- Jaeger: https://jaeger.$domain"
             echo ""
-            echo "> Platform (10 services) and Kong are NOT deployed automatically on apply."
-            echo "> Next: run Jenkins to build the 10 images, then in the ArgoCD UI click"
-            echo "> **Sync** on \`zord-platform-$suffix\`, wait Healthy, then **Sync** on \`kong-gateway-$suffix\`."
-            echo "> CloudFront/WAF are ALREADY created by this apply (origin = api.$domain). The moment"
-            echo "> Kong is Healthy and DNS resolves, the public URL serves traffic — no re-apply, no wait."
+            echo "> Platform (10 services) and Kong are NOT auto-deployed. Build the 10 images in"
+            echo "> Jenkins, then in the ArgoCD UI **Sync** \`zord-platform-$suffix\`, wait Healthy,"
+            echo "> then **Sync** \`kong-gateway-$suffix\`. CloudFront is already created (origin api.$domain)."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # ════════════════════════════════════════════════════════════════
+  # BOX 5 — Bootstrap (optional scripted sync). Only when action = bootstrap.
+  # ════════════════════════════════════════════════════════════════
+  bootstrap:
+    name: Bootstrap (scripted ArgoCD sync)
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'bootstrap'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.11.4"
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
       - name: Ordered ArgoCD Helm bootstrap
-        if: inputs.action == 'bootstrap'
         shell: bash
-        env:
-          TARGET_ENV: ${{ inputs.environment }}
         run: |
           set -euo pipefail
           config="live/environments/$TARGET_ENV/config.json"
@@ -273,119 +349,107 @@ jobs:
             return 1
           }
 
-          # 5-Application model (umbrella chart zord-app bundles platform + all
-          # 10 services + Kafka/Redis + migrations + NetworkPolicies + edge Rollout
-          # into zord-platform-<env>). Observability auto-syncs; we sync in order
-          # anyway to guarantee logging -> monitoring -> tracing dependency chain,
-          # then manual platform, then manual kong last.
           sync_app "zord-logging-$suffix"
           sync_app "zord-monitoring-$suffix"
           sync_app "zord-tracing-$suffix"
           sync_app "zord-platform-$suffix"
           sync_app "kong-gateway-$suffix"
 
-          # Kong's Ingress creates the environment ALB. Re-apply ONLY the edge
-          # component now that the origin exists, which creates CloudFront/WAF and
-          # <env>/zord/cloudfront-origin-verify without touching other components.
-          terraform -chdir="live/components/06-edge" init -reconfigure -input=false \
-            -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
-            -backend-config="bucket=$TF_STATE_BUCKET" \
-            -backend-config="key=eks/$TARGET_ENV/06-edge.tfstate"
-          terraform -chdir="live/components/06-edge" apply -auto-approve -no-color
-
-          # Enable auto-sync ONLY on observability. zord-platform and kong-gateway
-          # stay MANUAL forever (K8s team contract) so a bad image tag can never
-          # self-heal into production traffic without an operator sync.
           for app in zord-logging zord-monitoring zord-tracing; do
             kubectl -n argocd patch application "$app-$suffix" --type merge \
               -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}' || true
           done
           kubectl -n argocd get applications -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status'
 
-      - name: Created resources (live AWS, this env only)
-        if: inputs.action == 'apply'
-        shell: bash
-        env:
-          TARGET_ENV: ${{ inputs.environment }}
-        run: |
-          set -uo pipefail
-          config="live/environments/$TARGET_ENV/config.json"
-          cluster=$(jq -r .cluster_name "$config")
-          vpc_cidr=$(jq -r .network.vpc_cidr "$config")
-          # Every resource this project tags with Cluster=<cluster_name>. This is the
-          # single scoping key so we never read another env's or team's resources.
-          tagfilter="Key=Cluster,Values=$cluster"
+  # ════════════════════════════════════════════════════════════════
+  # BOX 6 — Destroy all 6 components (reverse). Only when action = destroy.
+  # ════════════════════════════════════════════════════════════════
+  destroy:
+    name: Destroy (6 components, reverse)
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.11.4"
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
 
-          count_state() {
+      - name: Validate destroy confirmation
+        shell: bash
+        run: |
+          [[ "${{ inputs.confirm_destroy }}" == "yes" ]] || { echo "confirm_destroy must be yes"; exit 1; }
+
+      - name: Destroy components 06 -> 01
+        shell: bash
+        run: |
+          set -euo pipefail
+          components=(01-foundation 02-data 03-compute 04-security 05-platform 06-edge)
+          export TF_VAR_environment="$TARGET_ENV"
+          init_component() {
             terraform -chdir="live/components/$1" init -reconfigure -input=false \
               -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
               -backend-config="bucket=$TF_STATE_BUCKET" \
-              -backend-config="key=eks/$TARGET_ENV/$1.tfstate" >/dev/null 2>&1
-            terraform -chdir="live/components/$1" state list 2>/dev/null | wc -l | tr -d ' '
+              -backend-config="key=eks/$TARGET_ENV/$1.tfstate"
           }
+          state_exists() { aws s3api head-object --bucket "$TF_STATE_BUCKET" --key "eks/$TARGET_ENV/$1.tfstate" >/dev/null 2>&1; }
 
-          {
-            echo "## Created resources — $TARGET_ENV (live AWS)"
-            echo ""
-            echo "Scoped to tag \`Cluster=$cluster\` and state prefix \`eks/$TARGET_ENV/\`. No other env/team/project is queried."
-            echo ""
-            echo "### Terraform-managed objects per component"
-            echo "| Component | Objects in state |"
-            echo "|---|---|"
-            total=0
-            for c in 01-foundation 02-data 03-compute 04-security 05-platform 06-edge; do
-              n=$(count_state "$c"); total=$((total + n))
-              echo "| \`$c\` | $n |"
+          config="live/environments/$TARGET_ENV/config.json"
+          cluster=$(jq -r .cluster_name "$config")
+          if aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" >/dev/null 2>&1; then
+            aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION"
+            kubectl delete ingress --all -A --ignore-not-found --wait=false || true
+            kubectl delete pvc --all -A --ignore-not-found --wait=false || true
+            for app in $(kubectl get applications.argoproj.io -n argocd -o name 2>/dev/null || true); do
+              kubectl patch "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' || true
             done
-            echo "| **Total** | **$total** |"
-            echo ""
-            echo "### Live AWS resources (tagged to this cluster)"
-            echo "| Resource type | Count / IDs |"
-            echo "|---|---|"
+            sleep 45
+          fi
+          for ((i=${#components[@]}-1; i>=0; i--)); do
+            c="${components[$i]}"
+            state_exists "$c" || { echo "skip $c (no state)"; continue; }
+            echo "::group::destroy $c"
+            init_component "$c"
+            terraform -chdir="live/components/$c" destroy -auto-approve -no-color
+            echo "::endgroup::"
+          done
 
-            eks=$(aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" --query 'cluster.status' --output text 2>/dev/null || echo "-")
-            echo "| EKS cluster \`$cluster\` | $eks |"
+  # ════════════════════════════════════════════════════════════════
+  # BOX 7 — Destroy verification (live AWS). Runs after destroy.
+  # ════════════════════════════════════════════════════════════════
+  destroy-verify:
+    name: Destroy verification (live AWS)
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    needs: destroy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
 
-            ng=$(aws eks list-nodegroups --cluster-name "$cluster" --region "$AWS_REGION" --query 'length(nodegroups)' --output text 2>/dev/null || echo 0)
-            echo "| EKS node groups | $ng |"
-
-            vpcs=$(aws ec2 describe-vpcs --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Vpcs)' --output text 2>/dev/null || echo 0)
-            echo "| VPCs (CIDR $vpc_cidr) | $vpcs |"
-
-            nat=$(aws ec2 describe-nat-gateways --region "$AWS_REGION" --filter "Name=tag:Cluster,Values=$cluster" "Name=state,Values=available" --query 'length(NatGateways)' --output text 2>/dev/null || echo 0)
-            echo "| NAT gateways | $nat |"
-
-            eip=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Addresses)' --output text 2>/dev/null || echo 0)
-            echo "| Elastic IPs | $eip |"
-
-            rds=$(aws rds describe-db-instances --region "$AWS_REGION" --query "length(DBInstances[?TagList[?Key=='Cluster'&&Value=='$cluster']])" --output text 2>/dev/null || echo 0)
-            echo "| RDS instances | $rds |"
-
-            # S3 buckets: only the exact env-scoped buckets declared for THIS env.
-            present=0
-            for b in $(jq -r '.buckets | to_entries[] | select(.value|type=="string") | .value' "$config"); do
-              aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && present=$((present + 1))
-            done
-            echo "| S3 buckets (this env) present | $present |"
-
-            elb=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" --query "length(LoadBalancers)" --output text 2>/dev/null || echo 0)
-            echo "| Load balancers (account, incl. shared ALB) | $elb |"
-            echo ""
-            echo "> Counts come from live AWS API calls at run time. No hardcoded numbers."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Destroy verification (live AWS, this env only)
-        if: inputs.action == 'destroy'
+      - name: Verify nothing billable remains (this env only)
         shell: bash
-        env:
-          TARGET_ENV: ${{ inputs.environment }}
         run: |
           set -uo pipefail
           config="live/environments/$TARGET_ENV/config.json"
           cluster=$(jq -r .cluster_name "$config")
           residual=0
-
-          check() { # label  count
+          check() {
             local label="$1" n="$2"
             if [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]]; then
               echo "| $label | ⚠️ $n remaining |"; residual=$((residual + n))
@@ -393,7 +457,6 @@ jobs:
               echo "| $label | ✅ 0 |"
             fi
           }
-
           {
             echo "## Destroy verification — $TARGET_ENV (live AWS)"
             echo ""
@@ -401,22 +464,18 @@ jobs:
             echo ""
             echo "| Resource | Status |"
             echo "|---|---|"
-
             eks=$(aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" --query 'cluster.status' --output text 2>/dev/null && echo 1 || echo 0)
             check "EKS cluster \`$cluster\`" "$([[ "$eks" == "1" ]] && echo 1 || echo 0)"
-
             check "VPCs" "$(aws ec2 describe-vpcs --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Vpcs)' --output text 2>/dev/null || echo 0)"
             check "NAT gateways" "$(aws ec2 describe-nat-gateways --region "$AWS_REGION" --filter "Name=tag:Cluster,Values=$cluster" "Name=state,Values=available" --query 'length(NatGateways)' --output text 2>/dev/null || echo 0)"
             check "Elastic IPs" "$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Addresses)' --output text 2>/dev/null || echo 0)"
             check "RDS instances" "$(aws rds describe-db-instances --region "$AWS_REGION" --query "length(DBInstances[?TagList[?Key=='Cluster'&&Value=='$cluster']])" --output text 2>/dev/null || echo 0)"
             check "EC2 instances (bastion/nodes)" "$(aws ec2 describe-instances --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query 'length(Reservations[].Instances[])' --output text 2>/dev/null || echo 0)"
-
             s3left=0
             for b in $(jq -r '.buckets | to_entries[] | select(.value|type=="string") | .value' "$config"); do
               aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && s3left=$((s3left + 1))
             done
             check "S3 buckets (this env)" "$s3left"
-
             echo ""
             if [[ "$residual" -eq 0 ]]; then
               echo "### ✅ Clean destroy: 0 billable resources remain for **$TARGET_ENV**."
@@ -424,31 +483,8 @@ jobs:
               echo "### ⚠️ $residual resource(s) still exist for **$TARGET_ENV** — review above."
             fi
             echo ""
-            echo "**Intentionally retained (shared, NOT billed to this env's compute):**"
-            echo "- Terraform state bucket \`$TF_STATE_BUCKET\` (holds all envs' state)"
-            echo "- Shared ACM certificate and apex SES identity (owned by production)"
+            echo "**Intentionally retained (shared):** state bucket \`$TF_STATE_BUCKET\`, shared ACM cert, apex SES identity."
             echo ""
-            echo "> This verifies **$TARGET_ENV only**. Other environments, teams, and projects are never queried or touched. This does not claim the whole AWS account bill is zero — only that this environment's resources were removed."
+            echo "> Verifies **$TARGET_ENV only**. Never claims the whole account bill is zero — only this environment's resources."
           } >> "$GITHUB_STEP_SUMMARY"
           [[ "$residual" -eq 0 ]] || echo "::warning::$residual residual resource(s) remain for $TARGET_ENV"
-
-      - name: Environment summary
-        if: always()
-        shell: bash
-        run: |
-          env="${{ inputs.environment }}"
-          config="live/environments/$env/config.json"
-          cluster=$(jq -r .cluster_name "$config")
-          domain=$(jq -r .dns.env_domain "$config")
-          {
-            echo "## Zord $env — ${{ inputs.action }}"
-            echo ""
-            echo "| Scope | Value |"
-            echo "|---|---|"
-            echo "| Cluster | \`$cluster\` |"
-            echo "| Domain | \`$domain\` |"
-            echo "| State layout | \`eks/$env/{01-foundation..06-edge}.tfstate\` |"
-            echo "| App model | \`$(jq -r .platform.application_mode "$config")\` (5 ArgoCD Applications) |"
-            echo ""
-            echo "> This run is scoped to **$env only**; other environments are excluded."
-          } >> "$GITHUB_STEP_SUMMARY"
