@@ -24,7 +24,19 @@ data "terraform_remote_state" "data" {
 }
 
 locals {
-  admin_principal_arn = try(local.config.cluster.admin_principal_arn, "") != "" ? local.config.cluster.admin_principal_arn : data.aws_caller_identity.current.arn
+  # EKS Access Entries require a real IAM role ARN, not an STS assumed-role
+  # session ARN. When the workflow runs under an assumed OIDC role,
+  # aws_caller_identity returns:
+  #   arn:aws:sts::<acct>:assumed-role/<RoleName>/<SessionName>
+  # which EKS rejects ("principalArn parameter format is not valid").
+  # Normalize it to:
+  #   arn:aws:iam::<acct>:role/<RoleName>
+  caller_arn      = data.aws_caller_identity.current.arn
+  assumed_role    = length(regexall("^arn:aws:sts::[0-9]+:assumed-role/", local.caller_arn)) > 0
+  role_name       = local.assumed_role ? split("/", local.caller_arn)[1] : ""
+  caller_role_arn = local.assumed_role ? "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.role_name}" : local.caller_arn
+
+  admin_principal_arn = try(local.config.cluster.admin_principal_arn, "") != "" ? local.config.cluster.admin_principal_arn : local.caller_role_arn
 }
 
 module "compute" {
