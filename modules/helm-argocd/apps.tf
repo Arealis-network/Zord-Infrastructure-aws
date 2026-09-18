@@ -111,7 +111,15 @@ locals {
     }
   }
 
-  applications = var.application_mode == "helm" ? local.helm_applications : local.legacy_applications
+  # Select by map lookup instead of a ternary. The helm and legacy maps have
+  # different keys AND different value shapes (sources vs source), so a ?: would
+  # fail Terraform's "consistent conditional result types" check. A map index
+  # sidesteps that — each branch keeps its own shape.
+  applications_by_mode = {
+    helm   = local.helm_applications
+    legacy = local.legacy_applications
+  }
+  applications = local.applications_by_mode[var.application_mode]
 }
 
 resource "helm_release" "argocd_apps" {
