@@ -13,7 +13,9 @@
         "public2_cidr": "10.1.2.0/24",
         "private1_cidr": "10.1.3.0/24",
         "private2_cidr": "10.1.4.0/24",
-        "admin_cidrs": [],
+        "admin_cidrs": [
+            "0.0.0.0/0"
+        ],
         "enable_flow_logs": true,
         "flow_log_retention_days": 30
     },

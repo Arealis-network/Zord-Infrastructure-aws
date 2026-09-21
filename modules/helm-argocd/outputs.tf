@@ -5,7 +5,7 @@ output "release_status" {
 
 output "url" {
   description = "ArgoCD UI URL."
-  value       = "https://argocd.${var.domain}"
+  value       = "https://${var.host_prefix}argocd.${var.domain}"
 }
 
 output "credentials_secret_name" {

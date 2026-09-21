@@ -105,6 +105,23 @@ variable "applications_auto_sync" {
   type        = bool
 }
 
+variable "observability_auto_sync" {
+  description = "Declaratively auto-sync logging/monitoring/tracing (pinned public images, no Jenkins gate)."
+  type        = bool
+  default     = true
+}
+
+variable "apex_domain" {
+  description = "Apex domain the shared wildcard ACM cert covers (e.g. zordnet.com). Platform hosts live directly under it as a single label so the cert matches."
+  type        = string
+}
+
+variable "platform_host_prefix" {
+  description = "Per-env prefix for platform hostnames (empty for production, 'stg-' / 'dev-' otherwise)."
+  type        = string
+  default     = ""
+}
+
 variable "application_name_suffix" {
   description = "Suffix appended to Helm Application names."
   type        = string

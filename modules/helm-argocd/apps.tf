@@ -67,11 +67,18 @@ locals {
       destination = { server = "https://kubernetes.default.svc", namespace = spec.namespace }
 
       # Every app's syncPolicy has the SAME object shape (automated / retry /
-      # syncOptions) so Terraform's type checker is happy. platform + kong stay
-      # MANUAL always (automated = null); observability auto-syncs only when
-      # applications_auto_sync is enabled. ServerSideApply is appended for SSA apps.
+      # syncOptions) so Terraform's type checker is happy.
+      #
+      # DECLARATIVE auto-sync — no kubectl patching from CI:
+      #   platform + kong  -> spec.auto = false  -> automated = null  -> MANUAL forever
+      #   observability    -> spec.auto = true   -> automated set when observability_auto_sync
+      #
+      # Observability uses pinned public images (kube-prometheus-stack, ES/Kibana,
+      # Jaeger), so it has no Jenkins image gate and can safely converge by itself
+      # the moment the cluster is up. applications_auto_sync is kept for future use
+      # but is intentionally NOT required for observability.
       syncPolicy = {
-        automated   = (spec.auto && var.applications_auto_sync) ? { prune = true, selfHeal = true } : null
+        automated   = (spec.auto && (var.observability_auto_sync || var.applications_auto_sync)) ? { prune = true, selfHeal = true } : null
         retry       = local.app_retry
         syncOptions = spec.ssa ? concat(local.app_sync_options, ["ServerSideApply=true"]) : local.app_sync_options
       }

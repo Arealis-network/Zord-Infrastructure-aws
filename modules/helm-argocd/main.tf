@@ -36,7 +36,7 @@ resource "aws_secretsmanager_secret_version" "argocd_credentials" {
   secret_string = jsonencode({
     username = "admin"
     password = random_password.argocd_admin.result
-    url      = "https://argocd.${var.domain}"
+    url      = "https://${var.host_prefix}argocd.${var.domain}"
   })
 
   lifecycle {
@@ -64,7 +64,9 @@ resource "helm_release" "argocd" {
       ingress = {
         enabled          = true
         ingressClassName = "alb"
-        hostname         = "argocd.${var.domain}"
+        # Single label under the apex so the one *.<domain> wildcard cert matches.
+        # prod: argocd.zordnet.com ; staging: stg-argocd.zordnet.com
+        hostname = "${var.host_prefix}argocd.${var.domain}"
         annotations = {
           "alb.ingress.kubernetes.io/group.name"  = var.shared_alb_group
           "alb.ingress.kubernetes.io/scheme"      = "internet-facing"

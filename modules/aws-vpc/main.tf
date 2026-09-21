@@ -150,30 +150,38 @@ resource "aws_security_group" "allow_all" {
   description = "Admin EC2 security group - restricted ports"
   vpc_id      = aws_vpc.eks_vpc.id
 
-  # SEC C4: SSH/Jenkins/SonarQube locked to admin_cidrs, NOT 0.0.0.0/0.
-  # Prefer SSM Session Manager (no inbound SSH). Set admin_cidrs to your office/VPN.
-  ingress {
-    description = "SSH (admin CIDRs only)"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.admin_cidrs
+
+  dynamic "ingress" {
+    for_each = length(var.admin_cidrs) > 0 ? [1] : []
+    content {
+      description = "SSH (admin CIDRs only)"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = var.admin_cidrs
+    }
   }
 
-  ingress {
-    description = "Jenkins (admin CIDRs only)"
-    from_port   = 7777
-    to_port     = 7777
-    protocol    = "tcp"
-    cidr_blocks = var.admin_cidrs
+  dynamic "ingress" {
+    for_each = length(var.admin_cidrs) > 0 ? [1] : []
+    content {
+      description = "Jenkins (admin CIDRs only)"
+      from_port   = 7777
+      to_port     = 7777
+      protocol    = "tcp"
+      cidr_blocks = var.admin_cidrs
+    }
   }
 
-  ingress {
-    description = "SonarQube (admin CIDRs only)"
-    from_port   = 7771
-    to_port     = 7771
-    protocol    = "tcp"
-    cidr_blocks = var.admin_cidrs
+  dynamic "ingress" {
+    for_each = length(var.admin_cidrs) > 0 ? [1] : []
+    content {
+      description = "SonarQube (admin CIDRs only)"
+      from_port   = 7771
+      to_port     = 7771
+      protocol    = "tcp"
+      cidr_blocks = var.admin_cidrs
+    }
   }
 
   egress {

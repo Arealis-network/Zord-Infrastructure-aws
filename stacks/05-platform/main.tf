@@ -60,8 +60,12 @@ module "aws_lb_controller" {
 module "external_dns" {
   source = "../../modules/helm-external-dns"
 
-  cluster_name             = var.cluster_name
-  domain                   = var.env_domain
+  cluster_name = var.cluster_name
+  # External DNS must manage records under the APEX, because platform hosts are
+  # single-label there (stg-argocd.zordnet.com) so the one wildcard cert matches.
+  # Filtering only on env_domain (staging.zordnet.com) would never match them and
+  # no Route53 record would be created.
+  domain                   = var.apex_domain
   eks_name_prefix          = var.eks_name_prefix
   eks_resource_prefix      = var.eks_resource_prefix
   node_groups_ready        = var.node_groups_ready
@@ -90,7 +94,8 @@ module "argocd" {
   source = "../../modules/helm-argocd"
 
   environment             = var.environment
-  domain                  = var.env_domain
+  domain                  = var.apex_domain
+  host_prefix             = var.platform_host_prefix
   acm_certificate_arn     = var.acm_certificate_arn
   shared_alb_group        = var.argocd_alb_group
   github_pat              = var.github_pat
@@ -99,6 +104,7 @@ module "argocd" {
   app_target_revision     = var.app_target_revision
   values_environment      = var.values_environment
   applications_auto_sync  = var.applications_auto_sync
+  observability_auto_sync = var.observability_auto_sync
   application_name_suffix = var.application_name_suffix
   node_groups_ready       = var.node_groups_ready
 }

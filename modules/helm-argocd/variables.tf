@@ -10,8 +10,14 @@ variable "environment" {
 }
 
 variable "domain" {
-  description = "Domain for ArgoCD UI (e.g., zordnet.com → argocd.zordnet.com)."
+  description = "Apex domain used to build the ArgoCD host. Must be the domain the shared wildcard ACM cert covers (e.g. zordnet.com), because an ALB HTTPS listener can only auto-discover a cert whose wildcard matches the host by ONE label."
   type        = string
+}
+
+variable "host_prefix" {
+  description = "Per-env prefix for the ArgoCD hostname so every env stays a SINGLE label under the apex and is covered by the one *.<domain> cert. Empty for production (argocd.<domain>); 'stg-' / 'dev-' for non-prod (stg-argocd.<domain>)."
+  type        = string
+  default     = ""
 }
 
 variable "acm_certificate_arn" {
@@ -81,9 +87,15 @@ variable "values_environment" {
 }
 
 variable "applications_auto_sync" {
-  description = "Enable automatic sync/prune/self-heal for Helm Applications. Keep false until Jenkins replaces all *-PLACEHOLDER image tags."
+  description = "Enable automatic sync/prune/self-heal for Helm Applications. Keep false until Jenkins replaces all *-PLACEHOLDER image tags. NOTE: platform and kong are NEVER auto-synced regardless of this flag."
   type        = bool
   default     = false
+}
+
+variable "observability_auto_sync" {
+  description = "Declaratively enable ArgoCD auto-sync for logging/monitoring/tracing. These use pinned public images (no Jenkins build), so they can converge on their own as soon as the cluster is up — no kubectl patching from CI. Platform and Kong remain manual."
+  type        = bool
+  default     = true
 }
 
 variable "application_name_suffix" {
