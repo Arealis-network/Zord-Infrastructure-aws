@@ -1,8 +1,11 @@
 # ═══════════════════════════════════════════════════════════════════
 # External Secrets Operator — Syncs AWS Secrets Manager → K8s Secrets
 # EKS Pod Identity grants SecretsManager access (no IMDS needed)
-# Infra owns: IAM Role + Pod Identity + ESO Helm controller.
-# App team owns: the ClusterSecretStore CR (via ArgoCD) — see note below.
+# Infra owns: IAM Role + Pod Identity + ESO Helm controller + the
+# ClusterSecretStore CR. The store authenticates with the IAM role created here,
+# so it belongs on the infra side. It used to live in the app team's zord-platform
+# chart, which is manual and image-gated — that made observability wait on
+# unrelated app builds. They removed their copy, so there is a single owner.
 # ═══════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────
@@ -71,6 +74,7 @@ resource "helm_release" "external_secrets" {
   name             = "external-secrets"
   repository       = "https://charts.external-secrets.io"
   chart            = "external-secrets"
+  version          = var.chart_version
   namespace        = var.namespace
   create_namespace = true
 
@@ -108,14 +112,13 @@ resource "helm_release" "cluster_secret_store" {
   namespace = var.namespace
   chart     = "${path.module}/charts/cluster-secret-store"
 
-  set {
-    name  = "storeName"
-    value = var.cluster_secret_store_name
-  }
-  set {
-    name  = "awsRegion"
-    value = var.aws_region
-  }
+  # A '/' in a `set` value is interpreted as a path separator by Helm's --set
+  # parser, so the API version is passed through `values` instead.
+  values = [yamlencode({
+    storeName  = var.cluster_secret_store_name
+    awsRegion  = var.aws_region
+    apiVersion = var.cluster_secret_store_api_version
+  })]
 
   # Take ownership of the object if it already exists (e.g. created by a previous
   # ArgoCD sync), instead of erroring out.

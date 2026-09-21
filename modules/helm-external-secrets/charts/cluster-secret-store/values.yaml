@@ -4,3 +4,9 @@ storeName: aws-secrets-manager
 # AWS region holding the Secrets Manager secrets. Supplied per environment by
 # Terraform — never hardcoded here.
 awsRegion: ""
+
+# API version of the ClusterSecretStore resource. Supplied by Terraform and kept
+# in step with the pinned External Secrets Operator chart version: ESO >= 0.17
+# (chart 2.x) serves external-secrets.io/v1 and no longer serves v1beta1 unless
+# crds.unsafeServeV1Beta1 is explicitly turned on.
+apiVersion: external-secrets.io/v1
