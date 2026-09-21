@@ -45,15 +45,17 @@ jobs:
   # BOX 1 — Validate all components (fmt + validate). Runs on PRs too.
   # ════════════════════════════════════════════════════════════════
   validate:
-    name: Validate all components
+    name: Step 1 - Check all components (format + validate)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Get the code
+        uses: actions/checkout@v4
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.11.4"
           terraform_wrapper: false
-      - name: Format and validate
+      - name: Check formatting and validate all 6 components
         shell: bash
         run: |
           set -euo pipefail
@@ -69,7 +71,7 @@ jobs:
   # BOX 2 — Plan all 6 components (read-only). Only when action = plan.
   # ════════════════════════════════════════════════════════════════
   plan:
-    name: Plan (6 components)
+    name: Preview changes (plan, no resources created)
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'plan'
     needs: validate
     runs-on: ubuntu-latest
@@ -77,17 +79,20 @@ jobs:
     env:
       TARGET_ENV: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Get the code
+        uses: actions/checkout@v4
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.11.4"
           terraform_wrapper: false
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 7200
-      - name: Plan components 01 -> 06
+      - name: Show what would change (01 to 06)
         shell: bash
         run: |
           set -euo pipefail
@@ -121,7 +126,7 @@ jobs:
   # BOX 3 — Apply all 6 components in order. Only when action = apply.
   # ════════════════════════════════════════════════════════════════
   apply:
-    name: Apply (6 components)
+    name: Step 2 - Create infrastructure (6 components)
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
     needs: validate
     runs-on: ubuntu-latest
@@ -129,18 +134,21 @@ jobs:
     env:
       TARGET_ENV: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Get the code
+        uses: actions/checkout@v4
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.11.4"
           terraform_wrapper: false
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 7200
 
-      - name: Apply components 01 -> 06
+      - name: Create all resources in order (01 foundation to 06 edge)
         shell: bash
         run: |
           set -euo pipefail
@@ -156,7 +164,7 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Created resources (live AWS, this env only)
+      - name: Show what was created (live AWS, this env only)
         shell: bash
         run: |
           set -uo pipefail
@@ -216,7 +224,7 @@ jobs:
   # Runs after apply. Its own box.
   # ════════════════════════════════════════════════════════════════
   gitops:
-    name: GitOps (observability sync + links)
+    name: Step 3 - Deploy observability and show links
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
     needs: apply
     runs-on: ubuntu-latest
@@ -224,18 +232,21 @@ jobs:
     env:
       TARGET_ENV: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Get the code
+        uses: actions/checkout@v4
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.11.4"
           terraform_wrapper: false
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 7200
 
-      - name: Auto-sync observability (safe subset) + links
+      - name: Sync logging, monitoring, tracing and show the links
         shell: bash
         run: |
           set -uo pipefail
@@ -243,14 +254,21 @@ jobs:
           on=$(jq -r '.platform.observability_auto_sync_on_apply // false' "$config")
           mode=$(jq -r .platform.application_mode "$config")
           domain=$(jq -r .dns.env_domain "$config")
+          apex=$(jq -r .dns.ses_domain "$config")
+          sub=$(jq -r .edge.subdomain "$config")
           suffix=$(jq -r .platform.application_name_suffix "$config")
+          # Flat single-label edge host per env, matching 06-edge (env_short = prod/stg/dev):
+          #   production -> api.<apex> ; staging -> stg-api.<apex> ; dev -> dev-api.<apex>
+          envname=$(jq -r .environment "$config")
+          short=$([[ "$envname" == "production" ]] && echo "prod" || ([[ "$envname" == "staging" ]] && echo "stg" || echo "dev"))
+          edge_host=$([[ "$envname" == "production" ]] && echo "${sub}.${apex}" || echo "${short}-${sub}.${apex}")
           if [[ "$on" != "true" || "$mode" != "helm" ]]; then
             echo "observability_auto_sync_on_apply disabled or non-helm env; skipping sync."
           else
             cluster=$(jq -r .cluster_name "$config")
             revision=$(jq -r .platform.target_revision "$config")
             values_env=$(jq -r .platform.values_environment "$config")
-            git clone --quiet --depth 1 --branch "$revision" https://github.com/Arealis-network/Arealis-Zord-intent.git /tmp/zord-obs || echo "clone skipped"
+            git clone --quiet --depth 1 --branch "$revision" "https://x-access-token:${TF_VAR_github_pat}@github.com/Arealis-network/Arealis-Zord-intent.git" /tmp/zord-obs || echo "clone skipped"
             if aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION" 2>/dev/null; then
               sync_and_wait() {
                 local app="$1"
@@ -292,14 +310,14 @@ jobs:
             echo ""
             echo "> Platform (10 services) and Kong are NOT auto-deployed. Build the 10 images in"
             echo "> Jenkins, then in the ArgoCD UI **Sync** \`zord-platform-$suffix\`, wait Healthy,"
-            echo "> then **Sync** \`kong-gateway-$suffix\`. CloudFront is already created (origin api.$domain)."
+            echo "> then **Sync** \`kong-gateway-$suffix\`. CloudFront is already created; public URL: https://$edge_host"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ════════════════════════════════════════════════════════════════
   # BOX 5 — Bootstrap (optional scripted sync). Only when action = bootstrap.
   # ════════════════════════════════════════════════════════════════
   bootstrap:
-    name: Bootstrap (scripted ArgoCD sync)
+    name: Optional - Auto-sync all apps (scripted, instead of ArgoCD UI)
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'bootstrap'
     needs: validate
     runs-on: ubuntu-latest
@@ -307,17 +325,20 @@ jobs:
     env:
       TARGET_ENV: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Get the code
+        uses: actions/checkout@v4
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.11.4"
           terraform_wrapper: false
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 7200
-      - name: Ordered ArgoCD Helm bootstrap
+      - name: Sync apps in order then finalize edge
         shell: bash
         run: |
           set -euo pipefail
@@ -329,7 +350,7 @@ jobs:
           values_env=$(jq -r .platform.values_environment "$config")
           suffix=$(jq -r .platform.application_name_suffix "$config")
 
-          git clone --quiet --depth 1 --branch "$revision" https://github.com/Arealis-network/Arealis-Zord-intent.git /tmp/zord-app
+          git clone --quiet --depth 1 --branch "$revision" "https://x-access-token:${TF_VAR_github_pat}@github.com/Arealis-network/Arealis-Zord-intent.git" /tmp/zord-app
           if grep -R --line-number PLACEHOLDER "/tmp/zord-app/kubernetes/values/$values_env"; then
             echo "Refusing bootstrap: placeholder image tags remain."
             exit 3
@@ -365,7 +386,7 @@ jobs:
   # BOX 6 — Destroy all 6 components (reverse). Only when action = destroy.
   # ════════════════════════════════════════════════════════════════
   destroy:
-    name: Destroy (6 components, reverse)
+    name: Delete this environment (reverse order 06 to 01)
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
     needs: validate
     runs-on: ubuntu-latest
@@ -373,23 +394,26 @@ jobs:
     env:
       TARGET_ENV: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Get the code
+        uses: actions/checkout@v4
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.11.4"
           terraform_wrapper: false
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 7200
 
-      - name: Validate destroy confirmation
+      - name: Check you typed yes to confirm
         shell: bash
         run: |
           [[ "${{ inputs.confirm_destroy }}" == "yes" ]] || { echo "confirm_destroy must be yes"; exit 1; }
 
-      - name: Destroy components 06 -> 01
+      - name: Delete all resources (06 edge back to 01 foundation)
         shell: bash
         run: |
           set -euo pipefail
@@ -427,7 +451,7 @@ jobs:
   # BOX 7 — Destroy verification (live AWS). Runs after destroy.
   # ════════════════════════════════════════════════════════════════
   destroy-verify:
-    name: Destroy verification (live AWS)
+    name: Confirm nothing is left (live AWS check)
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
     needs: destroy
     runs-on: ubuntu-latest
@@ -435,14 +459,16 @@ jobs:
     env:
       TARGET_ENV: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Get the code
+        uses: actions/checkout@v4
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 3600
 
-      - name: Verify nothing billable remains (this env only)
+      - name: Check no billable resources are left (this env only)
         shell: bash
         run: |
           set -uo pipefail

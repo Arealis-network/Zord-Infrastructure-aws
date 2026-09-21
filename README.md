@@ -11,7 +11,7 @@ The apps themselves are deployed by ArgoCD from the app repo `Arealis-Zord-inten
 ## Deploy in one line
 
 ```
-Do Part A once (setup)  →  Part B: click Apply  →  Part C: build images + click Sync  →  done
+Do Part A once (setup)  →  Part B: click Apply  →  Part B2: set CHANGE_ME secrets  →  Part C: build images + click Sync  →  done
 ```
 
 Deploy order across environments is always: **staging → dev → production**.
@@ -195,11 +195,74 @@ those need images first (Part C). This is on purpose.
 
 ---
 
+# PART B2 — Fill in the CHANGE_ME secrets (do this after Apply, before Part C)
+
+Terraform auto-generates almost every secret. A few values it **cannot** generate
+(a real API key, real Slack webhooks, a real email password). Terraform writes
+those as `CHANGE_ME` and never touches them again, so you set them once by hand in
+the AWS Console.
+
+There are exactly **2 secrets, 4 values** to edit (prefix = `staging` / `dev` / `production`):
+
+| Secret | Keys to set |
+|---|---|
+| `<env>/zord/prompt-layer-secrets` | `GEMINI_API_KEYS` |
+| `<env>/zord/console-secrets` | `SLACK_LEADS_WEBHOOK_URL`, `SLACK_SUPPORT_WEBHOOK_URL`, `SMTP_PASS` |
+
+### Step B2.1 — Open Secrets Manager
+
+| Step | Action |
+|---|---|
+| 1 | Sign in to the **AWS Console** |
+| 2 | Top search bar → type **Secrets Manager** → click it |
+| 3 | Check the region (top-right) is **Asia Pacific (Mumbai) ap-south-1** |
+
+### Step B2.2 — Edit `<env>/zord/prompt-layer-secrets`
+
+| Step | Action |
+|---|---|
+| 1 | Click **`staging/zord/prompt-layer-secrets`** (use your env prefix) |
+| 2 | Click **Retrieve secret value** → **Edit** |
+| 3 | Change `GEMINI_API_KEYS` from `CHANGE_ME` to the real Gemini API key |
+| 4 | Click **Save** |
+
+### Step B2.3 — Edit `<env>/zord/console-secrets`
+
+| Step | Action |
+|---|---|
+| 1 | Back to the list → click **`staging/zord/console-secrets`** |
+| 2 | Click **Retrieve secret value** → **Edit** |
+| 3 | Set the values in the table below, then click **Save** |
+
+Values to change in `console-secrets`:
+
+| Key | Change to |
+|---|---|
+| `SLACK_LEADS_WEBHOOK_URL` | real Slack webhook for leads |
+| `SLACK_SUPPORT_WEBHOOK_URL` | real Slack webhook for support |
+| `SMTP_PASS` | real Gmail app password for `careers@arealis.io` |
+| `JWT_SIGNING_SECRET`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM` | leave unchanged (already correct) |
+
+### Notes
+
+| Note | Detail |
+|---|---|
+| No overwrite | Terraform will **not** overwrite these on the next apply (they are protected) |
+| Restart pods | If pods are already running, restart them (or delete the pods in the ArgoCD UI) so they re-read the new values |
+| Don't touch others | DB, Kafka, JWT, relay tokens, vault key, signing keys, observability passwords are all auto-generated — leave them alone |
+
+✅ **Part B2 done. Real secrets are in place.**
+
+---
+
 # PART C — Deploy the apps (build images, then Sync)
 
 ### Step C1 — Build the images (Developer / Jenkins)
 Run the Jenkins pipeline for this environment. It builds the 10 service images,
 pushes them to ECR, and updates the Helm values (`app.yaml`).
+
+**Full step-by-step Jenkins guide (app repo):**
+[github.com/Arealis-network/Arealis-Zord-intent → jenkins/README.md](https://github.com/Arealis-network/Arealis-Zord-intent/blob/main/jenkins/README.md)
 
 > Until this is done, the app value files contain `PLACEHOLDER` and the platform
 > **cannot** be synced. This step is required.
