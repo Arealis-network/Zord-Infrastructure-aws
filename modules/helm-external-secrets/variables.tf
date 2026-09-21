@@ -22,6 +22,12 @@ variable "eks_resource_prefix" {
   type        = string
 }
 
+variable "cluster_secret_store_name" {
+  description = "Name of the ClusterSecretStore that every ExternalSecret references. Must match the app charts' secretStoreRef.name."
+  type        = string
+  default     = "aws-secrets-manager"
+}
+
 variable "namespace" {
   description = "Kubernetes namespace for External Secrets Operator."
   type        = string

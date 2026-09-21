@@ -88,10 +88,35 @@ resource "helm_release" "external_secrets" {
   ]
 }
 
-# ─────────────────────────────────────────
-# ClusterSecretStore — created by the APP TEAM (ArgoCD), not Terraform.
-# It's a Custom Resource of the ESO CRD installed above; Terraform can't reliably
-# create a CR right after its CRD (races the CRD becoming established). ArgoCD
-# handles CRD-then-CR ordering. App team adds ClusterSecretStore "aws-secrets-manager"
-# (provider aws, SecretsManager, region ap-south-1, Pod Identity auth).
-# ─────────────────────────────────────────
+
+resource "time_sleep" "wait_for_eso_crds" {
+  depends_on      = [helm_release.external_secrets]
+  create_duration = "30s"
+}
+
+resource "kubernetes_manifest" "cluster_secret_store" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ClusterSecretStore"
+    metadata = {
+      name = var.cluster_secret_store_name
+    }
+    spec = {
+      provider = {
+        aws = {
+          service = "SecretsManager"
+          # Region is driven by the environment, never hardcoded.
+          region = var.aws_region
+          # Pod Identity: the ESO controller's service account is bound to the IAM
+          # role above, so no static credentials and no IRSA annotation needed.
+          auth = {}
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    time_sleep.wait_for_eso_crds,
+    aws_eks_pod_identity_association.external_secrets,
+  ]
+}
