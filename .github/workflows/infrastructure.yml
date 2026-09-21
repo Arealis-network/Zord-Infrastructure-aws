@@ -196,6 +196,7 @@ jobs:
           set -uo pipefail
           config="live/environments/$TARGET_ENV/config.json"
           cluster=$(jq -r .cluster_name "$config")
+          res_prefix=$(jq -r .eks_resource_prefix "$config")
           export TF_VAR_environment="$TARGET_ENV"
 
           count() { # live count of one resource type, scoped to this cluster tag
@@ -213,10 +214,9 @@ jobs:
               ebs)  aws ec2 describe-volumes --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Volumes)' --output text 2>/dev/null || echo 0 ;;
               alb)  aws resourcegroupstaggingapi get-resources --region "$AWS_REGION" --resource-type-filters elasticloadbalancing:loadbalancer --tag-filters "Key=elbv2.k8s.aws/cluster,Values=$cluster" --query 'length(ResourceTagMappingList)' --output text 2>/dev/null || echo 0 ;;
               addon) aws eks list-addons --cluster-name "$cluster" --region "$AWS_REGION" --query 'length(addons)' --output text 2>/dev/null || echo 0 ;;
-              sm)   aws secretsmanager list-secrets --region "$AWS_REGION" --query "length(SecretList[?starts_with(Name, '$TARGET_ENV/zord/')])" --output text 2>/dev/null || echo 0 ;;
-              iam)  aws iam list-roles --query "length(Roles[?starts_with(RoleName, '$(jq -r .eks_resource_prefix "$config")')])" --output text 2>/dev/null || echo 0 ;;
-              kms)  aws kms list-aliases --region "$AWS_REGION" --query "length(Aliases[?contains(AliasName, '$(jq -r .eks_resource_prefix "$config")')])" --output text 2>/dev/null || echo 0 ;;
-              cf)   aws cloudfront list-distributions --query "length(DistributionList.Items[?Comment!=null] || \`[]\`)" --output text 2>/dev/null || echo 0 ;;
+              sm)   aws secretsmanager list-secrets --region "$AWS_REGION" --query "length(SecretList[?starts_with(Name, \`$TARGET_ENV/zord/\`)])" --output text 2>/dev/null || echo 0 ;;
+              iam)  aws iam list-roles --query "length(Roles[?starts_with(RoleName, \`$res_prefix\`)])" --output text 2>/dev/null || echo 0 ;;
+              kms)  aws kms list-aliases --region "$AWS_REGION" --query "length(Aliases[?contains(AliasName, \`$res_prefix\`)])" --output text 2>/dev/null || echo 0 ;;
             esac
           }
           s3_present=0
@@ -298,6 +298,51 @@ jobs:
             echo "| Records in the whole zone (all envs) | $r53_total |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # ── Ingress/DNS chain diagnostics ──
+          # An ALB only exists if an Ingress exists AND the LB controller is healthy.
+          # No ALB => no Route53 record => NXDOMAIN. Surface the chain here so the
+          # cause is visible in the summary instead of needing manual digging.
+          if aws eks update-kubeconfig --name "$cluster" --region "$AWS_REGION" >/dev/null 2>&1; then
+            {
+              echo "### Ingress and DNS chain"
+              echo ""
+              echo "Ingress -> ALB -> Route53. Each must succeed for a URL to resolve."
+              echo ""
+              echo "| Check | Result |"
+              echo "|---|---|"
+              ing=$(kubectl get ingress -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+              echo "| Ingress objects in cluster | ${ing:-0} |"
+              lbc=$(kubectl -n kube-system get pods -l app.kubernetes.io/name=aws-load-balancer-controller --no-headers 2>/dev/null | grep -c Running || echo 0)
+              echo "| AWS LB Controller pods Running | $lbc |"
+              edns=$(kubectl -n kube-system get pods -l app.kubernetes.io/name=external-dns --no-headers 2>/dev/null | grep -c Running || echo 0)
+              echo "| External DNS pods Running | $edns |"
+              echo ""
+              if [[ "${ing:-0}" -gt 0 ]]; then
+                echo "<details><summary>Ingress detail</summary>"
+                echo ""
+                echo '```'
+                kubectl get ingress -A 2>&1 | head -20
+                echo '```'
+                echo "</details>"
+                echo ""
+              fi
+              echo "<details><summary>AWS LB Controller logs (last 25)</summary>"
+              echo ""
+              echo '```'
+              kubectl -n kube-system logs -l app.kubernetes.io/name=aws-load-balancer-controller --tail=25 2>&1 | tail -25
+              echo '```'
+              echo "</details>"
+              echo ""
+              echo "<details><summary>External DNS logs (last 25)</summary>"
+              echo ""
+              echo '```'
+              kubectl -n kube-system logs -l app.kubernetes.io/name=external-dns --tail=25 2>&1 | tail -25
+              echo '```'
+              echo "</details>"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           if [[ "$ACTION" == "destroy" ]]; then
             # Billable leftovers only (SGs/IAM/KMS aliases cost nothing).
