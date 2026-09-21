@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cluster-secret-store
+description: >-
+  Infra-owned ClusterSecretStore that points External Secrets Operator at AWS
+  Secrets Manager using EKS Pod Identity. Packaged as a tiny local chart so it is
+  rendered at apply time (after the ESO CRDs are installed) rather than at plan
+  time, which is what kubernetes_manifest would require.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

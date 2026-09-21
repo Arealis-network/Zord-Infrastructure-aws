@@ -89,31 +89,39 @@ resource "helm_release" "external_secrets" {
 }
 
 
+# Wait for the ESO CRDs to be established before creating the custom resource.
 resource "time_sleep" "wait_for_eso_crds" {
   depends_on      = [helm_release.external_secrets]
-  create_duration = "30s"
+  create_duration = "45s"
 }
 
-resource "kubernetes_manifest" "cluster_secret_store" {
-  manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
-    kind       = "ClusterSecretStore"
-    metadata = {
-      name = var.cluster_secret_store_name
-    }
-    spec = {
-      provider = {
-        aws = {
-          service = "SecretsManager"
-          # Region is driven by the environment, never hardcoded.
-          region = var.aws_region
-          # Pod Identity: the ESO controller's service account is bound to the IAM
-          # role above, so no static credentials and no IRSA annotation needed.
-          auth = {}
-        }
-      }
-    }
+# IMPLEMENTATION NOTE — why helm_release and not kubernetes_manifest:
+#
+# kubernetes_manifest requires the target CRD to already exist at PLAN time. On a
+# fresh cluster the ESO CRDs do not exist during the first plan, so the plan itself
+# would fail with "no such CRD" — breaking any from-scratch deploy. helm_release
+# renders at APPLY time (after the CRDs are installed above), so it works on both a
+# first apply and re-applies. It also adopts/updates an existing object instead of
+# failing with "already exists" if a previous ArgoCD sync left one behind.
+resource "helm_release" "cluster_secret_store" {
+  name      = "zord-cluster-secret-store"
+  namespace = var.namespace
+  chart     = "${path.module}/charts/cluster-secret-store"
+
+  set {
+    name  = "storeName"
+    value = var.cluster_secret_store_name
   }
+  set {
+    name  = "awsRegion"
+    value = var.aws_region
+  }
+
+  # Take ownership of the object if it already exists (e.g. created by a previous
+  # ArgoCD sync), instead of erroring out.
+  force_update  = true
+  replace       = false
+  recreate_pods = false
 
   depends_on = [
     time_sleep.wait_for_eso_crds,

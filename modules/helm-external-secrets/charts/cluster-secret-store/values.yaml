@@ -1,0 +1,6 @@
+# Name every ExternalSecret references via secretStoreRef.name.
+storeName: aws-secrets-manager
+
+# AWS region holding the Secrets Manager secrets. Supplied per environment by
+# Terraform — never hardcoded here.
+awsRegion: ""
