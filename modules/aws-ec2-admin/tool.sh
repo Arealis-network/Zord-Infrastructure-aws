@@ -43,13 +43,52 @@ EOF
   '
 }
 
+# Helm and kubectl are installed from upstream release scripts rather than apt,
+# because Debian has no helm package and the kubectl apt repo needs a version-pinned
+# source. Same method the host uses, so container and host stay consistent.
+install_jenkins_helm_kubectl() {
+  docker exec -u 0 jenkins bash -lc '
+    set -euo pipefail
+
+    if ! command -v helm >/dev/null 2>&1; then
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    fi
+
+    if ! command -v kubectl >/dev/null 2>&1; then
+      tmp="$(mktemp -d)"
+      curl -fsSL -o "${tmp}/kubectl" \
+        "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+      install -m 0755 "${tmp}/kubectl" /usr/local/bin/kubectl
+      rm -rf "${tmp}"
+    fi
+
+    helm version
+    kubectl version --client
+  '
+}
+
+# The set of commands the Jenkins pipelines actually require. Keep this in step
+# with jenkins/verify-jenkins-runtime.sh in the app repo — that script fails the
+# build when any one of them is missing.
+JENKINS_REQUIRED_CMDS=(docker aws git helm kubectl)
+
+jenkins_has_all_tools() {
+  local cmd
+  for cmd in "${JENKINS_REQUIRED_CMDS[@]}"; do
+    if ! docker exec jenkins sh -lc "command -v ${cmd} >/dev/null 2>&1"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 ensure_jenkins_cli_tools() {
-  if docker exec jenkins sh -lc 'command -v docker >/dev/null 2>&1 && command -v aws >/dev/null 2>&1 && command -v git >/dev/null 2>&1'; then
-    echo "Jenkins container already has docker, aws, and git installed"
+  if jenkins_has_all_tools; then
+    echo "Jenkins container already has: ${JENKINS_REQUIRED_CMDS[*]}"
     return 0
   fi
 
-  echo "Installing docker, aws, and git inside the running Jenkins container"
+  echo "Installing missing build tools inside the running Jenkins container"
 
   docker exec -u 0 jenkins bash -lc '
     set -e
@@ -59,11 +98,19 @@ ensure_jenkins_cli_tools() {
   ' || true
 
   install_jenkins_docker_cli || true
+  install_jenkins_helm_kubectl || true
 
-  if docker exec jenkins sh -lc 'command -v docker >/dev/null 2>&1 && command -v aws >/dev/null 2>&1 && command -v git >/dev/null 2>&1'; then
-    docker exec jenkins sh -lc 'docker --version && aws --version && git --version'
+  if jenkins_has_all_tools; then
+    docker exec jenkins sh -lc \
+      'docker --version && aws --version && git --version && helm version --short && kubectl version --client'
     return 0
   fi
+
+  local cmd missing=()
+  for cmd in "${JENKINS_REQUIRED_CMDS[@]}"; do
+    docker exec jenkins sh -lc "command -v ${cmd} >/dev/null 2>&1" || missing+=("${cmd}")
+  done
+  warn "Jenkins container is still missing: ${missing[*]}"
 
   return 1
 }
@@ -198,7 +245,7 @@ docker --version
 docker volume create jenkins_home
 docker rm -f jenkins >/dev/null 2>&1 || true
 
-echo "Building custom Jenkins image with AWS CLI, Docker CLI, and Git"
+echo "Building custom Jenkins image with AWS CLI, Docker CLI, Git, Helm, and kubectl"
 cat > "${JENKINS_DOCKERFILE_TMP}" <<'EOF'
 FROM jenkins/jenkins:lts
 
@@ -222,6 +269,10 @@ RUN apt-get update \
     && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
     && curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin \
     && curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v1.59.1 \
+    && curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash \
+    && curl -fsSLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && install -m 0755 kubectl /usr/local/bin/kubectl \
+    && rm -f kubectl \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -238,6 +289,8 @@ RUN apt-get update \
     && go version \
     && trivy --version \
     && golangci-lint --version \
+    && helm version \
+    && kubectl version --client \
     && rm -rf /var/lib/apt/lists/*
 
 USER jenkins

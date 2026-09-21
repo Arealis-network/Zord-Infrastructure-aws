@@ -393,4 +393,64 @@ jobs:
               echo "> Observability auto-syncs (declared in Terraform). Platform and Kong are MANUAL:"
               echo "> build the 10 images in Jenkins, then Sync them in the ArgoCD UI."
             } >> "$GITHUB_STEP_SUMMARY"
+
+            # ── Bastion access + verify commands ──
+            # The IP is looked up live from the tagged admin instance in THIS
+            # environment, so the commands below are copy-pasteable as-is and
+            # nothing is hardcoded (each env has its own bastion).
+            bastion_ip=$(aws ec2 describe-instances --region "$AWS_REGION" \
+              --filters "Name=tag:Cluster,Values=$cluster" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[].PublicIpAddress | [0]' --output text 2>/dev/null)
+            [[ -z "${bastion_ip:-}" || "$bastion_ip" == "None" ]] && bastion_ip="<bastion-public-ip>"
+            {
+              echo "### Connect to the bastion and verify"
+              echo ""
+              echo "Step 1 — connect and point kubectl at this cluster:"
+              echo '```bash'
+              echo "ssh ec2-user@$bastion_ip"
+              echo "sudo -i"
+              echo "aws eks update-kubeconfig --name $cluster --region $AWS_REGION"
+              echo "kubectl config current-context"
+              echo '```'
+              echo ""
+              echo "Step 2 — namespaces and pods:"
+              echo '```bash'
+              echo "kubectl get ns"
+              echo "kubectl get pods -A"
+              echo "kubectl get pods -n logging"
+              echo "kubectl get pods -n monitoring"
+              echo "kubectl get pods -n tracing"
+              echo '```'
+              echo ""
+              echo "Step 3 — secrets pipeline (store must be Valid, all ExternalSecrets READY=True):"
+              echo '```bash'
+              echo "kubectl get clustersecretstore"
+              echo "kubectl get externalsecret -A"
+              echo '```'
+              echo ""
+              echo "### Jenkins and SonarQube"
+              echo ""
+              echo "| Tool | URL | Username | Password |"
+              echo "|---|---|---|---|"
+              echo "| Jenkins | http://$bastion_ip:7777 | \`admin\` | first-run token, see command below |"
+              echo "| SonarQube | http://$bastion_ip:7771 | \`admin\` | \`admin\` (forces a reset on first login) |"
+              echo ""
+              echo "Get the Jenkins first-run password (on the bastion, as root):"
+              echo '```bash'
+              echo "cat /home/ec2-user/jenkins-initial-admin-password"
+              echo '```'
+              echo ""
+              echo "> Bootstrap copies the token to that file. Jenkins deletes"
+              echo "> \`/var/jenkins_home/secrets/initialAdminPassword\` once setup is finished, so the"
+              echo "> saved copy above is the reliable source. If you have already completed setup, this"
+              echo "> token no longer applies — use the admin account you created."
+              echo ""
+              echo "Confirm the Jenkins agent has every tool the pipelines need:"
+              echo '```bash'
+              echo "docker exec jenkins sh -lc 'for c in docker aws git helm kubectl; do printf \"%-8s \" \$c; command -v \$c || echo MISSING; done'"
+              echo '```'
+              echo ""
+              echo "> Both run as Docker containers on the bastion (Jenkins 7777, SonarQube 7771) and are"
+              echo "> reachable only from \`admin_cidrs\`. Change both default passwords on first login."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
