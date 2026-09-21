@@ -53,11 +53,6 @@ resource "aws_iam_role_policy" "ec2_ecr_push" {
           "ecr:PutImage",
           "ecr:CreateRepository",
           "ecr:DescribeRepositories",
-          # Read-only tag inspection. The build pipeline checks whether an image
-          # tag already exists before pushing and FAILS CLOSED if it cannot tell,
-          # so without these it refuses to build rather than risk overwriting an
-          # existing tag. DescribeImages is the call it makes; ListImages covers
-          # tag enumeration for the same guard.
           "ecr:DescribeImages",
           "ecr:ListImages"
         ]
