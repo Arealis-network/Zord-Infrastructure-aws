@@ -18,12 +18,39 @@
 # ═══════════════════════════════════════════════════════════════════
 
 locals {
-  app_sync_options = ["CreateNamespace=true", "ApplyOutOfSyncOnly=true"]
+  # ── Sync options (PERMANENT deadlock prevention) ──
+  #
+  # Without these, a values-only change (e.g. an Ingress host) could never be
+  # applied once ANY resource in the Application was unhealthy:
+  #   old Ingress host has no matching ACM cert
+  #     -> AWS LB Controller refuses to create the ALB
+  #        -> Ingress never gets an address, so never becomes "healthy"
+  #           -> the sync sits in phase=Running forever waiting on it
+  #              -> ArgoCD refuses to start a NEW sync while one is Running
+  #                 -> the corrected host is never applied  => permanent deadlock
+  #
+  # Replace=true      : apply a values change by replacing the object instead of
+  #                     patching it, so a new spec lands even mid-degradation.
+  # RespectIgnoreDifferences / ApplyOutOfSyncOnly keep syncs minimal.
+  # SkipDryRunOnMissingResource avoids stalling on CRDs that are not installed yet.
+  #
+  # Combined with the FINITE retry limit below, a sync that cannot converge FAILS
+  # and releases the operation slot, instead of blocking every future sync.
+  # Base options shared by every app (safe with both Replace and ServerSideApply).
+  app_sync_options_base = [
+    "CreateNamespace=true",
+    "ApplyOutOfSyncOnly=true",
+    "SkipDryRunOnMissingResource=true",
+  ]
 
-  # Retry so tracing survives Elasticsearch/Prometheus not being ready yet.
+  # Default set: base + Replace (for non-SSA apps).
+  app_sync_options = concat(local.app_sync_options_base, ["Replace=true"])
+
+  # Finite retry: after these attempts the operation FAILS and frees the slot, so a
+  # corrected commit can sync. An unbounded/hanging op is what caused the deadlock.
   app_retry = {
-    limit   = 10
-    backoff = { duration = "10s", factor = 2, maxDuration = "3m" }
+    limit   = 5
+    backoff = { duration = "15s", factor = 2, maxDuration = "2m" }
   }
 
   # The five Applications. auto = whether this app auto-syncs; ssa = ServerSideApply.
@@ -78,9 +105,12 @@ locals {
       # the moment the cluster is up. applications_auto_sync is kept for future use
       # but is intentionally NOT required for observability.
       syncPolicy = {
-        automated   = (spec.auto && (var.observability_auto_sync || var.applications_auto_sync)) ? { prune = true, selfHeal = true } : null
-        retry       = local.app_retry
-        syncOptions = spec.ssa ? concat(local.app_sync_options, ["ServerSideApply=true"]) : local.app_sync_options
+        automated = (spec.auto && (var.observability_auto_sync || var.applications_auto_sync)) ? { prune = true, selfHeal = true } : null
+        retry     = local.app_retry
+        # Replace=true and ServerSideApply=true are mutually exclusive — SSA apps
+        # (kube-prometheus-stack, whose CRDs exceed the annotation limit) must use
+        # SSA, so they get the base options + SSA WITHOUT Replace.
+        syncOptions = spec.ssa ? concat(local.app_sync_options_base, ["ServerSideApply=true"]) : local.app_sync_options
       }
     }
   }
