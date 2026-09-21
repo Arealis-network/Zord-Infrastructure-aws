@@ -39,9 +39,16 @@ resource "aws_secretsmanager_secret_version" "argocd_credentials" {
     url      = "https://${var.host_prefix}argocd.${var.domain}"
   })
 
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
+  # Deliberately NO ignore_changes.
+  #
+  # This previously froze the WHOLE secret_string. When the hostname scheme changed
+  # to stg-argocd.<domain>, the secret kept serving the old url
+  # (argocd.staging.zordnet.com) forever, fixable only by hand in the Console.
+  #
+  # The password stays stable without ignore_changes: random_password persists its
+  # value in state and regenerates only if its own arguments change. Terraform now
+  # rewrites this secret only when the url or password genuinely changes, so the url
+  # is always correct after a hostname change.
 }
 
 # ─────────────────────────────────────────

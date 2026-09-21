@@ -1,3 +1,8 @@
+variable "environment" {
+  description = "Deployment environment (production, staging, dev). Scopes the bastion's Secrets Manager read access to <environment>/zord/* so each environment's bastion can only read its own secrets."
+  type        = string
+}
+
 variable "eks_name_prefix" {
   description = "Display name prefix for EKS resources."
   type        = string

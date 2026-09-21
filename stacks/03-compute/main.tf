@@ -36,6 +36,7 @@ module "addons" {
 module "ec2_admin" {
   source = "../../modules/aws-ec2-admin"
 
+  environment         = var.environment
   eks_name_prefix     = var.eks_name_prefix
   eks_resource_prefix = var.eks_resource_prefix
   cluster_name        = module.eks.cluster_name

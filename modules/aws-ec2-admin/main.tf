@@ -114,8 +114,14 @@ resource "aws_iam_role_policy" "ec2_eks_describe" {
         Action   = ["sts:GetCallerIdentity"]
         Resource = "*"
       },
-      # Read-only access to THIS project's secrets so the bastion can fetch
-      # ArgoCD/observability credentials. Scoped to production/zord/* only.
+      # Read-only access to THIS ENVIRONMENT's secrets so the bastion can fetch
+      # ArgoCD/observability credentials.
+      #
+      # BUG FIX: this was hardcoded to `production/zord/*` (a leftover from the
+      # single-environment layout), so on staging/dev the bastion got
+      # "not authorized to perform: secretsmanager:GetSecretValue on
+      #  resource: staging/zord/argocd-credentials".
+      # Now scoped per environment, so each bastion reads only its own secrets.
       {
         Effect = "Allow"
         Action = [
@@ -123,7 +129,34 @@ resource "aws_iam_role_policy" "ec2_eks_describe" {
           "secretsmanager:DescribeSecret",
           "secretsmanager:ListSecrets"
         ]
-        Resource = ["arn:aws:secretsmanager:*:*:secret:production/zord/*"]
+        Resource = ["arn:aws:secretsmanager:*:*:secret:${var.environment}/zord/*"]
+      },
+      # Read-only Route53 so the bastion can verify DNS records during
+      # troubleshooting (list zones / records). No write permissions — External DNS
+      # owns record changes.
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ListHostedZones",
+          "route53:ListHostedZonesByName",
+          "route53:ListResourceRecordSets",
+          "route53:GetHostedZone"
+        ]
+        Resource = "*"
+      },
+      # Read-only ELB/EC2 describe so the bastion can confirm the ALB and
+      # networking state while diagnosing ingress/DNS issues.
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:DescribeLoadBalancers",
+          "elasticloadbalancing:DescribeTargetGroups",
+          "elasticloadbalancing:DescribeTargetHealth",
+          "elasticloadbalancing:DescribeListeners",
+          "acm:ListCertificates",
+          "acm:DescribeCertificate"
+        ]
+        Resource = "*"
       }
     ]
   })
