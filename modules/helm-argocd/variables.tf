@@ -10,12 +10,12 @@ variable "environment" {
 }
 
 variable "domain" {
-  description = "Apex domain used to build the ArgoCD host. Must be the domain the shared wildcard ACM cert covers (e.g. zordnet.com), because an ALB HTTPS listener can only auto-discover a cert whose wildcard matches the host by ONE label."
+  description = "This environment's domain, used to build the ArgoCD host (e.g. staging.zordnet.com -> argocd.staging.zordnet.com). An existing ACM cert for *.<domain> must exist in the cluster region so the ALB HTTPS listener can discover it."
   type        = string
 }
 
 variable "host_prefix" {
-  description = "Per-env prefix for the ArgoCD hostname so every env stays a SINGLE label under the apex and is covered by the one *.<domain> cert. Empty for production (argocd.<domain>); 'stg-' / 'dev-' for non-prod (stg-argocd.<domain>)."
+  description = "Optional prefix for the ArgoCD hostname. Normally empty — kept for flexibility if a flat hostname scheme is ever needed."
   type        = string
   default     = ""
 }

@@ -61,10 +61,9 @@ module "external_dns" {
   source = "../../modules/helm-external-dns"
 
   cluster_name = var.cluster_name
-  # External DNS must manage records under the APEX, because platform hosts are
-  # single-label there (stg-argocd.zordnet.com) so the one wildcard cert matches.
-  # Filtering only on env_domain (staging.zordnet.com) would never match them and
-  # no Route53 record would be created.
+  # Filter on the APEX (zordnet.com): platform hosts are a single label there
+  # (stg-argocd.zordnet.com) so the one *.zordnet.com cert matches. Filtering on
+  # staging.zordnet.com would never match them and no record would be created.
   domain                   = var.apex_domain
   eks_name_prefix          = var.eks_name_prefix
   eks_resource_prefix      = var.eks_resource_prefix

@@ -207,6 +207,16 @@ jobs:
               eip)  aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Addresses)' --output text 2>/dev/null || echo 0 ;;
               rds)  aws rds describe-db-instances --region "$AWS_REGION" --query "length(DBInstances[?TagList[?Key=='Cluster'&&Value=='$cluster']])" --output text 2>/dev/null || echo 0 ;;
               ec2)  aws ec2 describe-instances --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query 'length(Reservations[].Instances[])' --output text 2>/dev/null || echo 0 ;;
+              subnet) aws ec2 describe-subnets --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Subnets)' --output text 2>/dev/null || echo 0 ;;
+              sg)   aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(SecurityGroups)' --output text 2>/dev/null || echo 0 ;;
+              igw)  aws ec2 describe-internet-gateways --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(InternetGateways)' --output text 2>/dev/null || echo 0 ;;
+              ebs)  aws ec2 describe-volumes --region "$AWS_REGION" --filters "Name=tag:Cluster,Values=$cluster" --query 'length(Volumes)' --output text 2>/dev/null || echo 0 ;;
+              alb)  aws resourcegroupstaggingapi get-resources --region "$AWS_REGION" --resource-type-filters elasticloadbalancing:loadbalancer --tag-filters "Key=elbv2.k8s.aws/cluster,Values=$cluster" --query 'length(ResourceTagMappingList)' --output text 2>/dev/null || echo 0 ;;
+              addon) aws eks list-addons --cluster-name "$cluster" --region "$AWS_REGION" --query 'length(addons)' --output text 2>/dev/null || echo 0 ;;
+              sm)   aws secretsmanager list-secrets --region "$AWS_REGION" --query "length(SecretList[?starts_with(Name, '$TARGET_ENV/zord/')])" --output text 2>/dev/null || echo 0 ;;
+              iam)  aws iam list-roles --query "length(Roles[?starts_with(RoleName, '$(jq -r .eks_resource_prefix "$config")')])" --output text 2>/dev/null || echo 0 ;;
+              kms)  aws kms list-aliases --region "$AWS_REGION" --query "length(Aliases[?contains(AliasName, '$(jq -r .eks_resource_prefix "$config")')])" --output text 2>/dev/null || echo 0 ;;
+              cf)   aws cloudfront list-distributions --query "length(DistributionList.Items[?Comment!=null] || \`[]\`)" --output text 2>/dev/null || echo 0 ;;
             esac
           }
           s3_present=0
@@ -214,27 +224,85 @@ jobs:
             aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 && s3_present=$((s3_present+1))
           done
 
+          # ── Route53 records actually published for this environment ──
+          # Every host for this env is a single label under the apex, prefixed per
+          # env (prod = no prefix). Counted live from the hosted zone.
+          apex=$(jq -r .dns.ses_domain "$config")
+          envname=$(jq -r .environment "$config")
+          hostpfx=$([[ "$envname" == "production" ]] && echo "" || ([[ "$envname" == "staging" ]] && echo "stg-" || echo "dev-"))
+          zid=$(aws route53 list-hosted-zones-by-name --dns-name "$apex" --query 'HostedZones[0].Id' --output text 2>/dev/null | sed 's|/hostedzone/||')
+          if [[ -n "${zid:-}" && "$zid" != "None" ]]; then
+            if [[ -n "$hostpfx" ]]; then
+              r53=$(aws route53 list-resource-record-sets --hosted-zone-id "$zid" \
+                --query "length(ResourceRecordSets[?starts_with(Name, '$hostpfx')])" --output text 2>/dev/null || echo 0)
+            else
+              # production: records directly under the apex, excluding any stg-/dev-
+              r53=$(aws route53 list-resource-record-sets --hosted-zone-id "$zid" \
+                --query "length(ResourceRecordSets[?!starts_with(Name, 'stg-') && !starts_with(Name, 'dev-')])" --output text 2>/dev/null || echo 0)
+            fi
+            r53_total=$(aws route53 list-resource-record-sets --hosted-zone-id "$zid" --query 'length(ResourceRecordSets)' --output text 2>/dev/null || echo 0)
+          else
+            r53=0; r53_total=0
+          fi
+
+          # ── Terraform-managed object count per component (the true total) ──
+          declare -A tfcount
+          tf_total=0
+          for c in $COMPONENTS; do
+            terraform -chdir="live/components/$c" init -reconfigure -input=false \
+              -backend-config="$GITHUB_WORKSPACE/live/environments/$TARGET_ENV/backend.hcl" \
+              -backend-config="bucket=$TF_STATE_BUCKET" \
+              -backend-config="key=eks/$TARGET_ENV/$c.tfstate" >/dev/null 2>&1
+            n=$(terraform -chdir="live/components/$c" state list 2>/dev/null | wc -l | tr -d ' ')
+            tfcount[$c]=$n
+            tf_total=$((tf_total + n))
+          done
+
           {
             echo "## Zord $TARGET_ENV — $ACTION"
             echo ""
             echo "Scoped to \`Cluster=$cluster\` and state \`eks/$TARGET_ENV/\`. Other environments are never touched."
+            echo "All numbers below come from live AWS API calls and Terraform state at run time."
             echo ""
-            echo "| Resource | Value |"
+            echo "### Total resources managed by Terraform"
+            echo "| Component | Objects in state |"
+            echo "|---|---|"
+            for c in $COMPONENTS; do echo "| \`$c\` | ${tfcount[$c]} |"; done
+            echo "| **TOTAL** | **$tf_total** |"
+            echo ""
+            echo "### Live AWS resources"
+            echo "| Resource | Count |"
             echo "|---|---|"
             echo "| EKS cluster \`$cluster\` | $(count eks) |"
             echo "| EKS node groups | $(count ng) |"
+            echo "| EKS addons | $(count addon) |"
             echo "| VPCs | $(count vpc) |"
+            echo "| Subnets | $(count subnet) |"
+            echo "| Internet gateways | $(count igw) |"
             echo "| NAT gateways | $(count nat) |"
             echo "| Elastic IPs | $(count eip) |"
-            echo "| RDS instances | $(count rds) |"
+            echo "| Security groups | $(count sg) |"
             echo "| EC2 instances | $(count ec2) |"
-            echo "| S3 buckets present | $s3_present |"
+            echo "| EBS volumes | $(count ebs) |"
+            echo "| Load balancers (this cluster) | $(count alb) |"
+            echo "| RDS instances | $(count rds) |"
+            echo "| S3 buckets | $s3_present |"
+            echo "| Secrets Manager (\`$TARGET_ENV/zord/*\`) | $(count sm) |"
+            echo "| IAM roles | $(count iam) |"
+            echo "| KMS aliases | $(count kms) |"
+            echo ""
+            echo "### Route53 (\`$apex\`)"
+            echo "| Item | Count |"
+            echo "|---|---|"
+            echo "| Records for this env (\`${hostpfx:-apex}\`) | $r53 |"
+            echo "| Records in the whole zone (all envs) | $r53_total |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "$ACTION" == "destroy" ]]; then
+            # Billable leftovers only (SGs/IAM/KMS aliases cost nothing).
             left=0
-            for k in ng vpc nat eip rds ec2; do
+            for k in ng vpc nat eip rds ec2 ebs alb; do
               v=$(count "$k"); [[ "$v" =~ ^[0-9]+$ ]] && left=$((left+v))
             done
             left=$((left + s3_present))
@@ -245,7 +313,10 @@ jobs:
                 echo "### $left resource(s) still exist for **$TARGET_ENV** — review the table above."
               fi
               echo ""
-              echo "**Kept on purpose (shared):** state bucket \`$TF_STATE_BUCKET\`, wildcard ACM cert, apex SES identity."
+              echo "**Kept on purpose (shared):** state bucket \`$TF_STATE_BUCKET\`, wildcard ACM cert, Route53 hosted zone, apex SES identity."
+              echo ""
+              echo "Terraform objects still in state: **$tf_total** (should be 0 after a full destroy)."
+              echo "Route53 records left for this env: **$r53**."
               echo ""
               echo "> Verifies **$TARGET_ENV only**. This does not claim the whole account bill is zero."
             } >> "$GITHUB_STEP_SUMMARY"

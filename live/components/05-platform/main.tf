@@ -28,9 +28,11 @@ data "terraform_remote_state" "security" {
 }
 
 locals {
-  # Platform UIs are a SINGLE label under the apex so the one *.<apex> ACM cert
-  # matches and the ALB can be created (a wildcard covers only one label):
-  #   production -> argocd.zordnet.com ; staging -> stg-argocd.zordnet.com
+  # ONE apex cert (zordnet.com + *.zordnet.com) serves every environment. A wildcard
+  # covers only ONE label, so platform hosts are a single label under the apex:
+  #   production -> argocd.zordnet.com
+  #   staging    -> stg-argocd.zordnet.com
+  #   dev        -> dev-argocd.zordnet.com
   platform_host_prefix = local.config.environment == "production" ? "" : "${local.env_short}-"
 }
 
