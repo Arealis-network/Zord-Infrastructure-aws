@@ -18,6 +18,7 @@ module "cloudfront_waf" {
   environment         = var.environment
   domain              = var.domain
   subdomain           = var.subdomain
+  public_fqdns        = var.public_fqdns
   origin_domain_name  = var.origin_domain_name
   waf_rate_limit      = var.waf_rate_limit
   acm_certificate_arn = var.acm_certificate_arn

@@ -19,8 +19,13 @@ output "cloudfront_hosted_zone_id" {
 }
 
 output "public_fqdn" {
-  description = "Public entrypoint FQDN served by CloudFront."
+  description = "Primary public entrypoint FQDN served by CloudFront."
   value       = local.fqdn
+}
+
+output "public_fqdns" {
+  description = "All public FQDNs served by this CloudFront distribution (aliases)."
+  value       = local.aliases
 }
 
 output "waf_web_acl_arn" {

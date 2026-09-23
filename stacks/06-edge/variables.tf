@@ -14,9 +14,15 @@ variable "domain" {
 }
 
 variable "subdomain" {
-  description = "Subdomain that fronts the origin through CloudFront."
+  description = "Primary subdomain that fronts the origin through CloudFront."
   type        = string
   default     = "api"
+}
+
+variable "public_fqdns" {
+  description = "Public FQDNs served as CloudFront aliases (api/www/kong-admin). Aliased to CloudFront by the caller."
+  type        = list(string)
+  default     = []
 }
 
 variable "origin_domain_name" {

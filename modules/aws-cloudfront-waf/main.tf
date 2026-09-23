@@ -1,33 +1,6 @@
-# ═══════════════════════════════════════════════════════════════════
-# CloudFront + WAF — MNC edge layer (caching, DDoS, WAF)
-#
-# Traffic flow:
-#   Internet
-#     ↓
-#   CloudFront (this module) — caching, DDoS (AWS Shield Standard), WAF
-#     ↓
-#   Shared internet-facing ALB (created by AWS LB Controller in the app repo)
-#     ↓
-#   Kong (Ingress + API Gateway, ClusterIP behind the ALB)
-#     ↓
-#   Microservices
-#
-# Self-contained: WAF WebACL + CloudFront distribution + association.
-# CloudFront + its WAF are GLOBAL — WAF WebACL MUST live in us-east-1
-# and the ACM cert for the alias MUST also be in us-east-1.
-#
-# NOTE (confirmed with app team): Kong is NOT exposed via an NLB. It sits
-# behind a shared internet-facing ALB (group zord-shared-alb) that already
-# terminates TLS with the ap-south-1 *.zordnet.com cert. CloudFront's origin
-# therefore points at the ALB DNS name. The custom origin below talks HTTPS
-# to the ALB and forwards the Host header (api.zordnet.com), which matches
-# the ALB's *.zordnet.com cert so SNI/TLS validation succeeds.
-#
-# The whole module is gated on origin_domain_name being set. The ALB is
-# created at runtime by the app repo, so on the very first apply this is
-# empty and CloudFront/WAF are skipped. Once the K8s team gives you the
-# ALB DNS name, set it and re-apply to bring the edge layer up.
-# ═══════════════════════════════════════════════════════════════════
+# CloudFront + WAF edge layer. Flow: Internet -> CloudFront/WAF -> ALB -> Kong -> services.
+# WAF WebACL and the viewer cert are global, so both must be in us-east-1.
+# Gated on origin_domain_name: empty = skipped, set = edge comes up.
 
 terraform {
   required_providers {
@@ -41,27 +14,21 @@ terraform {
 locals {
   enabled = var.origin_domain_name != ""
   fqdn    = "${var.subdomain}.${var.domain}"
-  # 3-way env map (not a binary ternary) so dev does not collide with staging.
+  # All public hosts CloudFront serves (deduped/sorted for a stable plan).
+  aliases     = distinct(sort(length(var.public_fqdns) > 0 ? var.public_fqdns : [local.fqdn]))
   name_prefix = "arealis-zord-${lookup({ production = "prod", staging = "stg", dev = "dev" }, var.environment, "dev")}"
   origin_id   = "kong-alb-origin"
 }
 
-# ─────────────────────────────────────────
-# Origin cloaking secret — CloudFront injects this header on every request
-# to the ALB. The app team configures Kong/ALB to REJECT any request that
-# does not carry it. This prevents attackers from bypassing CloudFront (and
-# therefore WAF) by hitting the ALB DNS name directly. #1 fintech edge control.
-# ─────────────────────────────────────────
-
+# Origin cloaking secret: CloudFront injects it on every origin request; Kong rejects
+# requests without it, so nobody can bypass CloudFront/WAF by hitting the ALB directly.
 resource "random_password" "origin_secret" {
   count   = local.enabled ? 1 : 0
   length  = 40
   special = false
 }
 
-# FULLY AUTOMATIC: the secret is written to AWS Secrets Manager. Kong reads it
-# via External Secrets Operator (no manual copy). No ignore_changes here — this
-# value is Terraform-owned and must stay in sync with CloudFront.
+# Written to Secrets Manager; Kong reads it via ESO (no manual copy).
 resource "aws_secretsmanager_secret" "origin_verify" {
   count                   = local.enabled ? 1 : 0
   name                    = "${var.environment}/zord/cloudfront-origin-verify"
@@ -78,21 +45,14 @@ resource "aws_secretsmanager_secret_version" "origin_verify" {
   count     = local.enabled ? 1 : 0
   secret_id = aws_secretsmanager_secret.origin_verify[0].id
 
-  # ── CANONICAL CONTRACT (locked with app team — do not rename) ──
-  # These JSON keys become the K8s Secret keys (app team uses dataFrom: extract).
-  # Kong pod env reads CLOUDFRONT_ORIGIN_VERIFY_SECRET. App repo files that depend
-  # on these exact names: deployment.yaml, configmap.yaml, CLOUDFRONT-EDGE.md.
+  # Canonical key names — locked with app team, do not rename (Kong reads them).
   secret_string = jsonencode({
     CLOUDFRONT_ORIGIN_VERIFY_HEADER = "X-Origin-Verify"
     CLOUDFRONT_ORIGIN_VERIFY_SECRET = random_password.origin_secret[0].result
   })
 }
 
-# ─────────────────────────────────────────
-# WAF WebACL (scope = CLOUDFRONT, must be us-east-1)
-# AWS managed rule sets + IP rate limiting.
-# ─────────────────────────────────────────
-
+# WAF WebACL (scope=CLOUDFRONT, us-east-1): AWS managed rule sets + IP rate limit.
 resource "aws_wafv2_web_acl" "edge" {
   count    = local.enabled ? 1 : 0
   provider = aws.us_east_1
@@ -174,8 +134,7 @@ resource "aws_wafv2_web_acl" "edge" {
     }
   }
 
-  # Bot Control — detects and blocks scrapers, scanners, automated abuse.
-  # Fintech-relevant: stops credential stuffing / automated fraud probing.
+  # Bot Control — blocks scrapers/scanners/credential stuffing.
   dynamic "rule" {
     for_each = var.enable_bot_control ? [1] : []
     content {
@@ -242,25 +201,10 @@ resource "aws_wafv2_web_acl" "edge" {
   }
 }
 
-# ─────────────────────────────────────────
-# WAF observability — metrics only (no CloudWatch Logs, to avoid log ingestion cost).
-#
-# WAF cannot push to Prometheus (it is a managed edge service with no scrape
-# endpoint). But every rule's visibility_config emits CloudWatch METRICS
-# (blocked/allowed/matched counts) — these are near-zero cost, unlike CloudWatch
-# LOGS. View them in Grafana via the CloudWatch data source.
-#
-# The per-request CloudWatch Logs group was intentionally removed to eliminate
-# log-ingestion cost. If request-level WAF forensics are ever required (e.g. for
-# a compliance audit), re-add an aws_wafv2_web_acl_logging_configuration pointing
-# at CloudWatch Logs, S3, or Kinesis Firehose (WAF's only supported destinations).
-# ─────────────────────────────────────────
+# WAF emits CloudWatch metrics (near-zero cost) via each rule's visibility_config.
+# Per-request logs are intentionally off; add a logging_configuration if ever needed.
 
-# ─────────────────────────────────────────
-# Security response headers policy (HSTS, anti-clickjacking, etc.)
-# Applied to every response CloudFront returns.
-# ─────────────────────────────────────────
-
+# Security response headers (HSTS, no-sniff, frame-deny, referrer, XSS).
 resource "aws_cloudfront_response_headers_policy" "security" {
   count = local.enabled ? 1 : 0
 
@@ -292,23 +236,18 @@ resource "aws_cloudfront_response_headers_policy" "security" {
   }
 }
 
-# ─────────────────────────────────────────
-# CloudFront distribution — fronts the shared ALB (Kong)
-# ─────────────────────────────────────────
-
+# CloudFront distribution — fronts the shared ALB (Kong).
 resource "aws_cloudfront_distribution" "edge" {
   count = local.enabled ? 1 : 0
 
   enabled         = true
   comment         = "${local.name_prefix} edge Internet to CloudFront to shared ALB to Kong"
-  aliases         = [local.fqdn]
+  aliases         = local.aliases
   is_ipv6_enabled = true
   web_acl_id      = aws_wafv2_web_acl.edge[0].arn
   price_class     = "PriceClass_200" # NA + EU + Asia (covers India)
 
-  # Origin = shared internet-facing ALB fronting Kong. HTTPS-only to the ALB;
-  # the forwarded Host header (api.zordnet.com) matches the ALB's *.zordnet.com
-  # cert so origin TLS validation succeeds.
+  # Origin = shared ALB fronting Kong. HTTPS-only; forwarded Host matches the ALB cert.
   origin {
     domain_name = var.origin_domain_name
     origin_id   = local.origin_id
@@ -320,9 +259,7 @@ resource "aws_cloudfront_distribution" "edge" {
       origin_ssl_protocols   = ["TLSv1.2"]
     }
 
-    # Origin cloaking: secret header on every origin request. Kong/ALB must
-    # reject requests missing it, so nobody can bypass CloudFront/WAF by
-    # hitting the ALB directly.
+    # Origin cloaking header — Kong rejects requests without it.
     custom_header {
       name  = "X-Origin-Verify"
       value = random_password.origin_secret[0].result
@@ -337,7 +274,7 @@ resource "aws_cloudfront_distribution" "edge" {
     compress                   = true
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security[0].id
 
-    # API traffic: forward everything, do not cache by default.
+    # API traffic: forward everything (incl. Host), no caching.
     forwarded_values {
       query_string = true
       headers      = ["*"]

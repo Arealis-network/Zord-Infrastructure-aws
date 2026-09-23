@@ -69,6 +69,12 @@
     "edge": {
         "enabled": true,
         "subdomain": "api",
+        "public_subdomains": [
+            "api",
+            "www",
+            "kong-admin"
+        ],
+        "origin_subdomain": "origin-api",
         "waf_rate_limit": 2000,
         "kong_alb_domain_name": ""
     }

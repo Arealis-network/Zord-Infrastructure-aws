@@ -9,9 +9,15 @@ variable "domain" {
 }
 
 variable "subdomain" {
-  description = "Subdomain that fronts the microservices through CloudFront (e.g. api => api.zordnet.com)."
+  description = "Primary subdomain (e.g. api). Used as the primary alias and in public_fqdn."
   type        = string
   default     = "api"
+}
+
+variable "public_fqdns" {
+  description = "Public FQDNs served as CloudFront aliases (api/www/kong-admin). Defaults to <subdomain>.<domain>."
+  type        = list(string)
+  default     = []
 }
 
 variable "acm_certificate_arn" {
@@ -20,7 +26,7 @@ variable "acm_certificate_arn" {
 }
 
 variable "origin_domain_name" {
-  description = "The public ALB DNS name that fronts Kong (shared internet-facing ALB created by the app repo's AWS LB Controller, e.g. k8s-zordshared-xxxx.ap-south-1.elb.amazonaws.com). CloudFront forwards traffic here. Leave empty to disable CloudFront until the ALB exists."
+  description = "CloudFront origin (stable origin host that External DNS points at the ALB). Empty = edge disabled."
   type        = string
   default     = ""
 }
