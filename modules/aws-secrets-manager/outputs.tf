@@ -17,6 +17,7 @@ output "secret_arns" {
     console              = aws_secretsmanager_secret.console.arn
     edge_signing_key     = aws_secretsmanager_secret.edge_signing_key.arn
     evidence_signing_key = aws_secretsmanager_secret.evidence_signing_key.arn
+    kong_manager         = aws_secretsmanager_secret.kong_manager.arn
   }
 }
 
@@ -35,5 +36,6 @@ output "secret_names" {
     console              = aws_secretsmanager_secret.console.name
     edge_signing_key     = aws_secretsmanager_secret.edge_signing_key.name
     evidence_signing_key = aws_secretsmanager_secret.evidence_signing_key.name
+    kong_manager         = aws_secretsmanager_secret.kong_manager.name
   }
 }
