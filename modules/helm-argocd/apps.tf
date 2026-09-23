@@ -65,13 +65,6 @@ locals {
       app = "zord-logging", chart = "zord-logging", file = "logging.yaml", release = "zord-logging", namespace = "logging", auto = true, ssa = false
     }
     monitoring = {
-      # include_crds = true: kube-prometheus-stack ships its CRDs in a crds/
-      # directory, which Helm (and ArgoCD) skip unless --include-crds is set. Under
-      # a multi-source Helm Application ArgoCD does NOT include CRDs by default, so
-      # the render carried 0 CRDs and the prometheus-operator had nothing to
-      # reconcile ("prometheuses not installed"). skipCrds=false turns that on.
-      # ssa is still required because those CRDs exceed the client-side annotation
-      # limit — the two settings are complementary, not alternatives.
       app = "zord-monitoring", chart = "zord-monitoring", file = "monitoring.yaml", release = "zord-monitoring", namespace = "monitoring", auto = true, ssa = true, include_crds = true
     }
     tracing = {
