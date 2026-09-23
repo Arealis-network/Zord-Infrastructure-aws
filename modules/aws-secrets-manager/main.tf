@@ -524,11 +524,6 @@ resource "random_password" "kibana_encryption_key" {
   special = false
 }
 
-resource "random_password" "kong_admin_ui" {
-  length  = 24
-  special = false
-}
-
 resource "random_password" "grafana_admin" {
   length  = 24
   special = false
@@ -557,10 +552,6 @@ resource "aws_secretsmanager_secret_version" "observability" {
     KIBANA_SYSTEM_USERNAME = "kibana_system"
     KIBANA_SYSTEM_PASSWORD = random_password.kibana_system.result
     KIBANA_ENCRYPTION_KEY  = random_password.kibana_encryption_key.result
-
-    # Kong admin UI
-    KONG_ADMIN_UI_USERNAME = "zordadmin"
-    KONG_ADMIN_UI_PASSWORD = random_password.kong_admin_ui.result
 
     # Grafana
     GRAFANA_ADMIN_USER     = "zordadmin"
