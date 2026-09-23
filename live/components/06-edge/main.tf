@@ -53,11 +53,15 @@ data "aws_route53_zone" "apex" {
 }
 
 # Public hosts -> CloudFront (A + AAAA per host). Created automatically by apply.
+# allow_overwrite: adopt any pre-existing record (e.g. one External DNS created
+# pointing at the ALB) instead of erroring. Infra is the owner of these names now;
+# the app team's External DNS must publish only <env>-origin-api, not these.
 resource "aws_route53_record" "public_ipv4" {
-  for_each = local.edge_active ? toset(local.public_fqdns) : []
-  zone_id  = data.aws_route53_zone.apex[0].zone_id
-  name     = each.value
-  type     = "A"
+  for_each        = local.edge_active ? toset(local.public_fqdns) : []
+  zone_id         = data.aws_route53_zone.apex[0].zone_id
+  name            = each.value
+  type            = "A"
+  allow_overwrite = true
 
   alias {
     name                   = module.edge.cloudfront_domain_name
@@ -67,10 +71,11 @@ resource "aws_route53_record" "public_ipv4" {
 }
 
 resource "aws_route53_record" "public_ipv6" {
-  for_each = local.edge_active ? toset(local.public_fqdns) : []
-  zone_id  = data.aws_route53_zone.apex[0].zone_id
-  name     = each.value
-  type     = "AAAA"
+  for_each        = local.edge_active ? toset(local.public_fqdns) : []
+  zone_id         = data.aws_route53_zone.apex[0].zone_id
+  name            = each.value
+  type            = "AAAA"
+  allow_overwrite = true
 
   alias {
     name                   = module.edge.cloudfront_domain_name
