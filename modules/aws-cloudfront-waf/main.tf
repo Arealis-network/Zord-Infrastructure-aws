@@ -11,6 +11,17 @@ terraform {
   }
 }
 
+# AWS-managed CloudFront policies. CachingDisabled = never cache (API traffic).
+# AllViewerExceptHostHeader = forward all viewer headers/query/cookies to the origin
+# EXCEPT Host, so CloudFront uses the origin's own hostname for the TLS handshake.
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
 locals {
   enabled = var.origin_domain_name != ""
   fqdn    = "${var.subdomain}.${var.domain}"
@@ -272,21 +283,9 @@ resource "aws_cloudfront_distribution" "edge" {
     allowed_methods            = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods             = ["GET", "HEAD"]
     compress                   = true
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security[0].id
-
-    # API traffic: forward everything (incl. Host), no caching.
-    forwarded_values {
-      query_string = true
-      headers      = ["*"]
-
-      cookies {
-        forward = "all"
-      }
-    }
-
-    min_ttl     = 0
-    default_ttl = 0
-    max_ttl     = 0
   }
 
   restrictions {
