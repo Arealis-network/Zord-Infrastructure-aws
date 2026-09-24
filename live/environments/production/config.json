@@ -76,6 +76,7 @@
         ],
         "origin_subdomain": "origin-api",
         "waf_rate_limit": 2000,
+        "enable_bot_control": false,
         "kong_alb_domain_name": ""
     }
 }

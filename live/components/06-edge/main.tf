@@ -93,6 +93,7 @@ module "edge" {
   public_fqdns        = local.public_fqdns
   origin_domain_name  = local.edge_active ? local.origin_host : ""
   waf_rate_limit      = local.config.edge.waf_rate_limit
+  enable_bot_control  = try(local.config.edge.enable_bot_control, true)
   acm_certificate_arn = local.edge_active ? data.aws_acm_certificate.edge_us_east_1[0].arn : ""
 }
 

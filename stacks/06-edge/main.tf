@@ -21,5 +21,6 @@ module "cloudfront_waf" {
   public_fqdns        = var.public_fqdns
   origin_domain_name  = var.origin_domain_name
   waf_rate_limit      = var.waf_rate_limit
+  enable_bot_control  = var.enable_bot_control
   acm_certificate_arn = var.acm_certificate_arn
 }

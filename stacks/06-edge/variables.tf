@@ -37,6 +37,12 @@ variable "waf_rate_limit" {
   default     = 2000
 }
 
+variable "enable_bot_control" {
+  description = "Enable AWS WAF Bot Control. Off for API/admin hosts that serve non-browser clients (Postman, service-to-service), which Bot Control blocks."
+  type        = bool
+  default     = true
+}
+
 variable "acm_certificate_arn" {
   description = "ARN of the ACM certificate in us-east-1 used by the CloudFront alias."
   type        = string

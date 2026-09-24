@@ -11,15 +11,13 @@ terraform {
   }
 }
 
-# AWS-managed CloudFront policies. CachingDisabled = never cache (API traffic).
-# AllViewerExceptHostHeader = forward all viewer headers/query/cookies to the origin
-# EXCEPT Host, so CloudFront uses the origin's own hostname for the TLS handshake.
+
 data "aws_cloudfront_cache_policy" "caching_disabled" {
   name = "Managed-CachingDisabled"
 }
 
-data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
-  name = "Managed-AllViewerExceptHostHeader"
+data "aws_cloudfront_origin_request_policy" "all_viewer" {
+  name = "Managed-AllViewer"
 }
 
 locals {
@@ -278,13 +276,16 @@ resource "aws_cloudfront_distribution" "edge" {
   }
 
   default_cache_behavior {
-    target_origin_id           = local.origin_id
-    viewer_protocol_policy     = "redirect-to-https"
-    allowed_methods            = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-    cached_methods             = ["GET", "HEAD"]
-    compress                   = true
+    target_origin_id       = local.origin_id
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods         = ["GET", "HEAD"]
+    compress               = true
+    # AllViewer forwards every viewer header INCLUDING Host, so Kong routes by host
+    # (stg-api / stg-www / stg-kong-admin). AllViewerExceptHostHeader stripped Host,
+    # so Kong saw the origin name for every request and 403'd per-host routing.
     cache_policy_id            = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security[0].id
   }
 
