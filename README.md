@@ -262,7 +262,7 @@ Run the Jenkins pipeline for this environment. It builds the 10 service images,
 pushes them to ECR, and updates the Helm values (`app.yaml`).
 
 **Full step-by-step Jenkins guide (app repo):**
-[github.com/Arealis-network/Arealis-Zord-intent → jenkins/README.md](https://github.com/Arealis-network/Arealis-Zord-intent/blob/main/jenkins/README.md)
+[github.com/Arealis-network/Arealis-Zord-intent → jenkins/README.md](https://github.com/Arealis-network/Arealis-Zord-intent/blob/prod/jenkins/README.md)
 
 > Until this is done, the app value files contain `PLACEHOLDER` and the platform
 > **cannot** be synced. This step is required.
@@ -337,7 +337,7 @@ kubectl get pods -n kube-system | grep -E "coredns|kube-proxy|aws-node|eks-pod-i
 | Cluster | `arealis-zord-stg-eks` | `arealis-zord-dev-eks` | `arealis-zord-prod-eks` |
 | VPC CIDR | `10.1.0.0/16` | `10.2.0.0/16` | `10.0.0.0/16` |
 | Domain | `staging.zordnet.com` | `dev.zordnet.com` | `zordnet.com` |
-| App branch | `staging` | `master` | `main` |
+| App branch | `staging` | `dev` | `prod` |
 
 Each environment is fully isolated: separate state, network, cluster, domain,
 and secrets. Deleting one never affects another.

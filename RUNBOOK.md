@@ -41,7 +41,7 @@ protection and GitHub Environment approvals (see Section 8).
 | Cluster | `arealis-zord-stg-eks` | `arealis-zord-dev-eks` | `arealis-zord-prod-eks` |
 | VPC CIDR | `10.1.0.0/16` | `10.2.0.0/16` | `10.0.0.0/16` |
 | Domain | `staging.zordnet.com` | `dev.zordnet.com` | `zordnet.com` |
-| App branch | `staging` | `master` | `main` |
+| App branch | `staging` | `dev` | `prod` |
 | Values dir | `kubernetes/values/staging` | `kubernetes/values/dev` | `kubernetes/values/prod` |
 | ArgoCD mode | `helm` | `helm` | `legacy` (until promoted) |
 | State keys | `eks/staging/*.tfstate` | `eks/dev/*.tfstate` | `eks/production/*.tfstate` |
@@ -87,7 +87,7 @@ Run from GitHub → Actions → **Zord Infrastructure** → Run workflow.
 This is the day-to-day sequence. It is **one `apply`, no waits, no second apply.**
 
 ```
-STEP 1 — Developer: open PR in the app repo, merge to the env branch (staging/master/main).
+STEP 1 — Developer: open PR in the app repo, merge to the env branch (staging/dev/prod).
 STEP 2 — Platform: run the workflow, action = apply, environment = <env>.
            → Infra + observability (logging/monitoring/tracing) + CloudFront all created.
            → Summary shows ArgoCD / Grafana / Kibana / Jaeger links + the public URL.
@@ -158,7 +158,7 @@ The workflow fails at start without these.
 - On `production`, add **required reviewers** so a human must approve before any
   production apply/destroy runs. This is the change-control gate.
 
-**Branch protection** (Settings → Branches) on `main` / `master` / `staging`:
+**Branch protection** (Settings → Branches) on `prod` / `dev` / `staging`:
 - Require a pull request before merging
 - Require approvals (at least one reviewer)
 - Require the `validate` status check to pass before merge

@@ -55,7 +55,7 @@
         "external_secrets_namespace": "external-secrets",
         "external_secrets_service_account": "external-secrets",
         "application_mode": "helm",
-        "target_revision": "master",
+        "target_revision": "dev",
         "values_environment": "dev",
         "application_name_suffix": "dev",
         "applications_auto_sync": false,

@@ -75,9 +75,9 @@ variable "application_mode" {
 }
 
 variable "app_target_revision" {
-  description = "Git revision ArgoCD watches (staging, master/dev, main/prod, or a custom Jenkins branch)."
+  description = "Git revision ArgoCD watches (staging, dev, prod, or a custom Jenkins branch)."
   type        = string
-  default     = "main"
+  default     = "prod"
 }
 
 variable "values_environment" {
