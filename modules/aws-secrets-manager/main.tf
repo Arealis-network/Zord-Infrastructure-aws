@@ -588,6 +588,7 @@ resource "aws_secretsmanager_secret" "kong_manager" {
 resource "aws_secretsmanager_secret_version" "kong_manager" {
   secret_id = aws_secretsmanager_secret.kong_manager.id
   secret_string = jsonencode({
+    KONG_MANAGER_USERNAME = "admin"
     KONG_MANAGER_PASSWORD = random_password.kong_manager.result
   })
 }
