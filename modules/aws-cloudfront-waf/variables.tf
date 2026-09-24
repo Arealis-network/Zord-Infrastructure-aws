@@ -42,3 +42,14 @@ variable "enable_bot_control" {
   type        = bool
   default     = true
 }
+
+variable "upload_body_rule_overrides" {
+  description = <<-EOT
+    CommonRuleSet rules to set to COUNT (not block) so multipart file uploads
+    (XLSX/CSV) are not blocked by body-size / binary-content heuristics. Default
+    covers the size and generic body rules that trip uploads while keeping the
+    injection/XSS rules active.
+  EOT
+  type        = list(string)
+  default     = ["SizeRestrictions_BODY", "GenericRFI_BODY", "CrossSiteScripting_BODY"]
+}

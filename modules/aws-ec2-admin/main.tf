@@ -159,6 +159,19 @@ resource "aws_iam_role_policy" "ec2_eks_describe" {
           "acm:DescribeCertificate"
         ]
         Resource = "*"
+      },
+      # Read-only WAF so the bastion can inspect the edge WebACL and pull sampled/
+      # blocked requests when diagnosing 403s (the app team needs this to see which
+      # rule fired). No write — rule changes stay in Terraform.
+      {
+        Effect = "Allow"
+        Action = [
+          "wafv2:ListWebACLs",
+          "wafv2:GetWebACL",
+          "wafv2:GetSampledRequests",
+          "wafv2:ListResourcesForWebACL"
+        ]
+        Resource = "*"
       }
     ]
   })

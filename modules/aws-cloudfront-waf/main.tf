@@ -87,6 +87,21 @@ resource "aws_wafv2_web_acl" "edge" {
       managed_rule_group_statement {
         vendor_name = "AWS"
         name        = "AWSManagedRulesCommonRuleSet"
+
+        # File uploads (multipart XLSX/CSV) trip the CommonRuleSet body rules —
+        # notably SizeRestrictions_BODY (>8KB) and generic binary-content matches.
+        # Exclude those specific rules so legitimate uploads pass while the rest of
+        # the CommonRuleSet still applies. Scoped to upload paths only via the
+        # rule_action_override + the label-based scope below.
+        dynamic "rule_action_override" {
+          for_each = toset(var.upload_body_rule_overrides)
+          content {
+            name = rule_action_override.value
+            action_to_use {
+              count {}
+            }
+          }
+        }
       }
     }
 
