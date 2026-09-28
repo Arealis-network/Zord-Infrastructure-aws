@@ -73,7 +73,6 @@
             "api",
             "www",
             "kong-admin",
-            "kafka-ui",
             "conduktor"
         ],
         "origin_subdomain": "origin-api",

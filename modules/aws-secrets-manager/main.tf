@@ -139,9 +139,18 @@ resource "random_password" "kafka_prompt_layer" {
   length  = 28
   special = false
 }
-# read-only user for the Kafka UI (provectus). App grants it Describe+Read only.
-resource "random_password" "kafka_ui" {
+# Conduktor Console: read-only Kafka user + admin login + in-cluster Postgres.
+# App grants the Kafka user Describe+Read only. All auto-generated (no CHANGE_ME).
+resource "random_password" "conduktor_kafka" {
   length  = 28
+  special = false
+}
+resource "random_password" "conduktor_admin" {
+  length  = 24
+  special = false
+}
+resource "random_password" "conduktor_db" {
+  length  = 24
   special = false
 }
 
@@ -218,10 +227,6 @@ resource "aws_secretsmanager_secret_version" "kafka" {
     KAFKA_TOKEN_PASSWORD        = random_password.kafka_token.result
     KAFKA_PROMPT_LAYER_USERNAME = "prompt-layer-service"
     KAFKA_PROMPT_LAYER_PASSWORD = random_password.kafka_prompt_layer.result
-
-    # read-only user for the Kafka UI (provectus). App grants Describe+Read only.
-    KAFKA_UI_USERNAME = "kafka"
-    KAFKA_UI_PASSWORD = random_password.kafka_ui.result
   })
 }
 
@@ -599,5 +604,32 @@ resource "aws_secretsmanager_secret_version" "kong_manager" {
   secret_string = jsonencode({
     KONG_MANAGER_USERNAME = "admin"
     KONG_MANAGER_PASSWORD = random_password.kong_manager.result
+  })
+}
+
+# ─────────────────────────────────────────
+# Conduktor Console (Kafka observability UI). App reads <env>/zord/conduktor-secrets
+# via an ExternalSecret. 3 auto-generated passwords + 2 non-secret values:
+#   CDK_ADMIN_*     -> Conduktor UI login
+#   CDK_DATABASE_*  -> Console's in-cluster Postgres creds
+#   KAFKA_CONDUKTOR_PASSWORD -> read-only Kafka user (chart grants Describe/Read only)
+# Covered by the existing ESO wildcard <env>/zord/*, so no new IAM is required.
+# ─────────────────────────────────────────
+
+resource "aws_secretsmanager_secret" "conduktor" {
+  name                    = "${var.environment}/zord/conduktor-secrets"
+  description             = "Conduktor Console credentials (auto-generated) for Arealis Zord (${var.environment})"
+  recovery_window_in_days = 0
+  tags                    = { Name = "${var.environment}/zord/conduktor-secrets" }
+}
+
+resource "aws_secretsmanager_secret_version" "conduktor" {
+  secret_id = aws_secretsmanager_secret.conduktor.id
+  secret_string = jsonencode({
+    CDK_ADMIN_EMAIL          = "admin@zordnet.com"
+    CDK_ADMIN_PASSWORD       = random_password.conduktor_admin.result
+    CDK_DATABASE_USERNAME    = "conduktor"
+    CDK_DATABASE_PASSWORD    = random_password.conduktor_db.result
+    KAFKA_CONDUKTOR_PASSWORD = random_password.conduktor_kafka.result
   })
 }
