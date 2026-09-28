@@ -78,6 +78,13 @@ resource "helm_release" "external_secrets" {
   namespace        = var.namespace
   create_namespace = true
 
+  # On destroy the operator's webhook + CR finalizers can block `helm uninstall`
+  # until the 5m Helm timeout ("context deadline exceeded"). The null_resource
+  # below strips those finalizers first; these settings keep the uninstall itself
+  # from waiting on graceful pod/webhook teardown.
+  wait          = false
+  wait_for_jobs = false
+
   values = [yamlencode({
     installCRDs = true
     serviceAccount = {
@@ -90,6 +97,41 @@ resource "helm_release" "external_secrets" {
     aws_eks_pod_identity_association.external_secrets,
     var.node_groups_ready
   ]
+}
+
+# Destroy-time safety net: before the ESO operator is uninstalled, strip
+# finalizers from all ESO custom resources and CRDs so nothing blocks teardown.
+# This resource depends_on the operator release, so on `terraform destroy` it is
+# destroyed FIRST (reverse dependency order) — running the cleanup while the
+# operator is still alive, right before its Helm uninstall. No-op on create/apply.
+resource "null_resource" "eso_finalizer_cleanup" {
+  triggers = {
+    cluster_name = var.cluster_name
+    aws_region   = var.aws_region
+    namespace    = var.namespace
+  }
+
+  depends_on = [helm_release.external_secrets]
+
+  provisioner "local-exec" {
+    when        = destroy
+    on_failure  = continue
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set +e
+      aws eks update-kubeconfig --name "${self.triggers.cluster_name}" --region "${self.triggers.aws_region}" >/dev/null 2>&1
+      # Strip finalizers from ESO custom resources so their deletion doesn't block.
+      for kind in clustersecretstores secretstores externalsecrets clusterexternalsecrets pushsecrets; do
+        for res in $(kubectl get "$kind" -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} {end}' 2>/dev/null); do
+          ns="$${res%/*}"; name="$${res#*/}"
+          kubectl patch "$kind" -n "$ns" "$name" --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null
+        done
+      done
+      # Drop the ESO CRDs so the namespace/release can finalize.
+      kubectl get crd 2>/dev/null | grep 'external-secrets.io' | awk '{print $1}' | xargs -r kubectl delete crd --wait=false 2>/dev/null
+      exit 0
+    EOT
+  }
 }
 
 

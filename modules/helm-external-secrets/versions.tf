@@ -11,5 +11,9 @@ terraform {
     time = {
       source = "hashicorp/time"
     }
+    # destroy-time finalizer cleanup so ESO uninstall doesn't hang
+    null = {
+      source = "hashicorp/null"
+    }
   }
 }
