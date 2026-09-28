@@ -139,6 +139,11 @@ resource "random_password" "kafka_prompt_layer" {
   length  = 28
   special = false
 }
+# read-only user for the Kafka UI (provectus). App grants it Describe+Read only.
+resource "random_password" "kafka_ui" {
+  length  = 28
+  special = false
+}
 
 # ─────────────────────────────────────────
 # Shared Infrastructure Config (DB host, Kafka, etc.)
@@ -213,6 +218,10 @@ resource "aws_secretsmanager_secret_version" "kafka" {
     KAFKA_TOKEN_PASSWORD        = random_password.kafka_token.result
     KAFKA_PROMPT_LAYER_USERNAME = "prompt-layer-service"
     KAFKA_PROMPT_LAYER_PASSWORD = random_password.kafka_prompt_layer.result
+
+    # read-only user for the Kafka UI (provectus). App grants Describe+Read only.
+    KAFKA_UI_USERNAME = "kafka"
+    KAFKA_UI_PASSWORD = random_password.kafka_ui.result
   })
 }
 

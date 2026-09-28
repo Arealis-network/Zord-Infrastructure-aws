@@ -72,7 +72,8 @@
         "public_subdomains": [
             "api",
             "www",
-            "kong-admin"
+            "kong-admin",
+            "kafka-ui"
         ],
         "origin_subdomain": "origin-api",
         "waf_rate_limit": 2000,
