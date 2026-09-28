@@ -73,7 +73,8 @@
             "api",
             "www",
             "kong-admin",
-            "kafka-ui"
+            "kafka-ui",
+            "conduktor"
         ],
         "origin_subdomain": "origin-api",
         "waf_rate_limit": 2000,
