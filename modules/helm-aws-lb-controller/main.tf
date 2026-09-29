@@ -122,17 +122,34 @@ resource "null_resource" "alb_cleanup" {
       set +e
       REGION="${self.triggers.aws_region}"; VPC="${self.triggers.vpc_id}"
       aws eks update-kubeconfig --name "${self.triggers.cluster_name}" --region "$REGION" >/dev/null 2>&1
-      # Delete the k8s objects that spawn ALBs/NLBs so the controller deprovisions them.
+      # Best-effort: delete the k8s objects that spawn ALBs/NLBs (if the cluster is
+      # still reachable) so the controller deprovisions them cleanly.
       kubectl delete ingress --all-namespaces --all --wait=false 2>/dev/null
       kubectl delete svc --all-namespaces --field-selector spec.type=LoadBalancer --wait=false 2>/dev/null
-      # Give the controller time to reclaim the ALBs and release their ENIs.
-      sleep 60
-      # Belt-and-suspenders: directly delete any ELBv2 still in this VPC.
+
+      # Primary fix: delete ALL ELBv2 (ALB/NLB) in this VPC directly. This works even
+      # if the controller is already gone (orphaned LB) — the case that broke destroy.
       for arn in $(aws elbv2 describe-load-balancers --region "$REGION" --query "LoadBalancers[?VpcId=='$VPC'].LoadBalancerArn" --output text 2>/dev/null); do
         aws elbv2 delete-load-balancer --region "$REGION" --load-balancer-arn "$arn" 2>/dev/null
       done
-      # Delete any leftover available ENIs so subnets/IGW can be removed.
-      sleep 30
+
+      # Wait (up to ~3m) for the LB ENIs holding public IPs to drain — those are the
+      # "mapped public address(es)" that block IGW detach.
+      for i in $(seq 1 18); do
+        left=$(aws ec2 describe-network-interfaces --region "$REGION" --filters "Name=vpc-id,Values=$VPC" --query "length(NetworkInterfaces[?Association.PublicIp!=null])" --output text 2>/dev/null)
+        [ "$left" = "0" ] && break
+        sleep 10
+      done
+
+      # Force-detach + delete any ENI that still holds a public IP.
+      for eni in $(aws ec2 describe-network-interfaces --region "$REGION" --filters "Name=vpc-id,Values=$VPC" --query "NetworkInterfaces[?Association.PublicIp!=null].NetworkInterfaceId" --output text 2>/dev/null); do
+        att=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$eni" --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text 2>/dev/null)
+        [ "$att" != "None" ] && [ -n "$att" ] && aws ec2 detach-network-interface --region "$REGION" --attachment-id "$att" --force 2>/dev/null
+        sleep 5
+        aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$eni" 2>/dev/null
+      done
+
+      # Delete any remaining available ENIs so subnets can be removed.
       for eni in $(aws ec2 describe-network-interfaces --region "$REGION" --filters "Name=vpc-id,Values=$VPC" "Name=status,Values=available" --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null); do
         aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$eni" 2>/dev/null
       done
