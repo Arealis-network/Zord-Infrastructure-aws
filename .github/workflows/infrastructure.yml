@@ -147,6 +147,11 @@ jobs:
               # ENIs keep public IPs in the subnets and the VPC destroy fails with
               # "mapped public address(es)" / "subnet has dependencies". This sweep
               # force-removes them so one-click destroy is reliable every time.
+              #
+              # Disable errexit for the whole sweep: any single AWS call may
+              # legitimately fail (resource already gone, cluster absent) and MUST NOT
+              # abort the destroy. errexit is restored right after.
+              set +e
               # Prefer the EKS API (authoritative) to find the cluster's VPC.
               vpc=$(aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" \
                 --query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null)
@@ -198,6 +203,7 @@ jobs:
               else
                 echo "no VPC found for $TARGET_ENV — skipping AWS sweep"
               fi
+              set -e  # restore errexit for the Terraform destroy loop
 
               for ((i=${#COMPS[@]}-1; i>=0; i--)); do
                 c="${COMPS[$i]}"
