@@ -141,17 +141,30 @@ resource "random_password" "kafka_prompt_layer" {
 }
 # Conduktor Console: read-only Kafka user + admin login + in-cluster Postgres.
 # App grants the Kafka user Describe+Read only. All auto-generated (no CHANGE_ME).
+# Kafka SCRAM password goes into a JAAS string — keep it alphanumeric only
+# (no " \ : $) to avoid breaking the login module config. No UI complexity rule.
 resource "random_password" "conduktor_kafka" {
   length  = 28
   special = false
 }
+# Conduktor UI admin login requires upper+lower+number+special. Guarantee a
+# special char; override_special avoids $ : / @ " \ that break JSON/URLs/JAAS.
 resource "random_password" "conduktor_admin" {
-  length  = 24
-  special = false
+  length           = 24
+  min_upper        = 2
+  min_lower        = 2
+  min_numeric      = 2
+  min_special      = 2
+  override_special = "!#%*-_="
 }
+# Console's in-cluster Postgres password — same safe complexity.
 resource "random_password" "conduktor_db" {
-  length  = 24
-  special = false
+  length           = 24
+  min_upper        = 2
+  min_lower        = 2
+  min_numeric      = 2
+  min_special      = 2
+  override_special = "!#%*-_="
 }
 
 # ─────────────────────────────────────────
