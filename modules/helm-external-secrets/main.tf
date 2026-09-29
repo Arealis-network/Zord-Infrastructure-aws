@@ -135,10 +135,40 @@ resource "null_resource" "eso_finalizer_cleanup" {
 }
 
 
-# Wait for the ESO CRDs to be established before creating the custom resource.
-resource "time_sleep" "wait_for_eso_crds" {
-  depends_on      = [helm_release.external_secrets]
-  create_duration = "45s"
+# Wait for the ESO webhook to be READY before creating the ClusterSecretStore.
+# CRDs establish before the webhook pod is serving; creating the CR too early
+# fails with "no endpoints available for service external-secrets-webhook".
+# Because the operator release runs with wait=false (so destroy doesn't hang),
+# we can't rely on Helm's own wait — poll the webhook deployment here instead.
+resource "null_resource" "wait_for_eso_webhook" {
+  triggers = {
+    cluster_name = var.cluster_name
+    aws_region   = var.aws_region
+    namespace    = var.namespace
+    # re-run if the operator release changes (e.g. version bump)
+    release = helm_release.external_secrets.id
+  }
+
+  depends_on = [helm_release.external_secrets]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set +e
+      aws eks update-kubeconfig --name "${self.triggers.cluster_name}" --region "${self.triggers.aws_region}" >/dev/null 2>&1
+      NS="${self.triggers.namespace}"
+      # Wait until the webhook deployment is Available AND its Service has ready
+      # endpoints (that's what the admission call actually needs).
+      for i in $(seq 1 60); do
+        kubectl -n "$NS" rollout status deploy/external-secrets-webhook --timeout=10s >/dev/null 2>&1
+        eps=$(kubectl -n "$NS" get endpoints external-secrets-webhook -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)
+        if [ -n "$eps" ]; then echo "webhook ready: $eps"; exit 0; fi
+        echo "waiting for external-secrets-webhook endpoints... ($i)"; sleep 5
+      done
+      echo "WARNING: webhook not confirmed ready after ~5m; proceeding anyway"
+      exit 0
+    EOT
+  }
 }
 
 # IMPLEMENTATION NOTE — why helm_release and not kubernetes_manifest:
@@ -169,7 +199,7 @@ resource "helm_release" "cluster_secret_store" {
   recreate_pods = false
 
   depends_on = [
-    time_sleep.wait_for_eso_crds,
+    null_resource.wait_for_eso_webhook,
     aws_eks_pod_identity_association.external_secrets,
   ]
 }

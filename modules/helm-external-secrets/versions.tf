@@ -6,12 +6,7 @@ terraform {
     helm = {
       source = "hashicorp/helm"
     }
-    # Short wait so the ESO CRDs are established before the ClusterSecretStore
-    # custom resource is created.
-    time = {
-      source = "hashicorp/time"
-    }
-    # destroy-time finalizer cleanup so ESO uninstall doesn't hang
+    # destroy-time finalizer cleanup + webhook-readiness wait
     null = {
       source = "hashicorp/null"
     }
