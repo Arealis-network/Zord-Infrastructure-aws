@@ -142,109 +142,10 @@ jobs:
                 sleep 45
               fi
 
-              # ── AWS sweep function (ALWAYS safe to call; never aborts the job) ──
-              # K8s-created ALBs/NLBs are NOT in Terraform state. If any survive, their
-              # ENIs keep public IPs in the subnets and the VPC destroy fails with
-              # "mapped public address(es)" / "subnet has dependencies".
-              # IMPORTANT: this must run AFTER the LB controller (05-platform) is gone —
-              # otherwise the controller just recreates the ALB from the Ingress. So it
-              # is called inside the loop right after 05-platform is destroyed.
-              aws_sweep() {
-                set +e
-                local vpc
-                vpc=$(aws eks describe-cluster --name "$cluster" --region "$AWS_REGION" \
-                  --query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null)
-                if [[ -z "$vpc" || "$vpc" == "None" ]]; then
-                  vpc=$(aws ec2 describe-vpcs --region "$AWS_REGION" \
-                    --filters "Name=tag:Name,Values=$(jq -r .vpc_name_prefix "live/environments/$TARGET_ENV/config.json")" \
-                    --query 'Vpcs[0].VpcId' --output text 2>/dev/null)
-                fi
-                if [[ -z "$vpc" || "$vpc" == "None" ]]; then
-                  echo "aws_sweep: no VPC found for $TARGET_ENV — nothing to sweep"; set -e; return 0
-                fi
-                echo "::group::AWS sweep for VPC $vpc"
-                for arn in $(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
-                  --query "LoadBalancers[?VpcId=='$vpc'].LoadBalancerArn" --output text 2>/dev/null); do
-                  echo "deleting load balancer $arn"
-                  aws elbv2 delete-load-balancer --region "$AWS_REGION" --load-balancer-arn "$arn" 2>/dev/null
-                done
-                for name in $(aws elb describe-load-balancers --region "$AWS_REGION" \
-                  --query "LoadBalancerDescriptions[?VPCId=='$vpc'].LoadBalancerName" --output text 2>/dev/null); do
-                  aws elb delete-load-balancer --region "$AWS_REGION" --load-balancer-name "$name" 2>/dev/null
-                done
-                for _ in $(seq 1 18); do
-                  local left
-                  left=$(aws ec2 describe-network-interfaces --region "$AWS_REGION" \
-                    --filters "Name=vpc-id,Values=$vpc" \
-                    --query "length(NetworkInterfaces[?Association.PublicIp!=null])" --output text 2>/dev/null || echo 0)
-                  [[ "$left" == "0" ]] && break
-                  echo "waiting for $left public-IP ENIs to release..."; sleep 10
-                done
-                for eni in $(aws ec2 describe-network-interfaces --region "$AWS_REGION" \
-                  --filters "Name=vpc-id,Values=$vpc" \
-                  --query "NetworkInterfaces[?Association.PublicIp!=null].NetworkInterfaceId" --output text 2>/dev/null); do
-                  local att
-                  att=$(aws ec2 describe-network-interfaces --region "$AWS_REGION" --network-interface-ids "$eni" \
-                    --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text 2>/dev/null)
-                  [[ "$att" != "None" && -n "$att" ]] && aws ec2 detach-network-interface --region "$AWS_REGION" --attachment-id "$att" --force 2>/dev/null
-                  sleep 5
-                  aws ec2 delete-network-interface --region "$AWS_REGION" --network-interface-id "$eni" 2>/dev/null
-                done
-                for eni in $(aws ec2 describe-network-interfaces --region "$AWS_REGION" \
-                  --filters "Name=vpc-id,Values=$vpc" "Name=status,Values=available" \
-                  --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null); do
-                  aws ec2 delete-network-interface --region "$AWS_REGION" --network-interface-id "$eni" 2>/dev/null
-                done
-                echo "::endgroup::"
-                set -e
-                return 0
-              }
-
-              # ── DNS cleanup: delete this env's orphaned Route53 records ──
-              # Observability ingresses (grafana/jaeger/kibana) publish records via
-              # External DNS — NOT Terraform. On destroy they orphan (point at a gone
-              # ALB). Delete every record for THIS env's prefix so a destroy leaves no
-              # DNS footprint. SAFETY: staging=stg-, dev=dev-. Production is SKIPPED
-              # (its records are un-prefixed apex names like api/www — too risky to
-              # auto-delete). Apex NS/SOA and ACM validation CNAMEs are never matched.
-              dns_cleanup() {
-                set +e
-                local pfx=""
-                [[ "$TARGET_ENV" == "staging" ]] && pfx="stg-"
-                [[ "$TARGET_ENV" == "dev" ]] && pfx="dev-"
-                if [[ -z "$pfx" ]]; then
-                  echo "dns_cleanup: skipping (env=$TARGET_ENV has no safe prefix)"; set -e; return 0
-                fi
-                local apex zid
-                apex=$(jq -r .dns.ses_domain "live/environments/$TARGET_ENV/config.json")
-                zid=$(aws route53 list-hosted-zones-by-name --dns-name "$apex" \
-                  --query 'HostedZones[0].Id' --output text 2>/dev/null | sed 's|/hostedzone/||')
-                if [[ -z "$zid" || "$zid" == "None" ]]; then
-                  echo "dns_cleanup: no hosted zone for $apex"; set -e; return 0
-                fi
-                echo "::group::DNS cleanup ($pfx*) in zone $apex"
-                # Build a single DELETE change-batch with jq: take every record whose
-                # Name starts with the env prefix, excluding NS/SOA (safety). jq emits
-                # the exact ResourceRecordSet objects Route53 returned, so the DELETE
-                # matches precisely (TTL, alias, values all preserved).
-                aws route53 list-resource-record-sets --hosted-zone-id "$zid" --output json 2>/dev/null \
-                  | jq --arg p "$pfx" '{Changes: [ .ResourceRecordSets[]
-                      | select(.Name | startswith($p))
-                      | select(.Type != "NS" and .Type != "SOA")
-                      | {Action: "DELETE", ResourceRecordSet: .} ]}' > /tmp/dns_del.json
-                local n
-                n=$(jq '.Changes | length' /tmp/dns_del.json 2>/dev/null || echo 0)
-                if [[ "$n" -gt 0 ]]; then
-                  aws route53 change-resource-record-sets --hosted-zone-id "$zid" \
-                    --change-batch file:///tmp/dns_del.json 2>/dev/null \
-                    && echo "deleted $n $pfx records" || echo "DNS delete failed (non-fatal)"
-                else
-                  echo "no $pfx records to delete"
-                fi
-                echo "::endgroup::"
-                set -e
-                return 0
-              }
+              # Cleanup of resources Terraform does NOT own (K8s-created ALBs/ENIs +
+              # External-DNS records) lives in scripts/destroy-cleanup.sh. It is
+              # best-effort and never aborts the destroy.
+              chmod +x scripts/destroy-cleanup.sh || true
 
               for ((i=${#COMPS[@]}-1; i>=0; i--)); do
                 c="${COMPS[$i]}"
@@ -255,11 +156,11 @@ jobs:
                 # After the platform (LB controller) is destroyed, sweep orphaned
                 # ALBs/ENIs so 01-foundation (VPC) can be torn down. The controller is
                 # dead now, so it cannot recreate the ALB.
-                [[ "$c" == "05-platform" ]] && aws_sweep
+                [[ "$c" == "05-platform" ]] && bash scripts/destroy-cleanup.sh sweep "$TARGET_ENV" "$AWS_REGION"
               done
-              # All components gone — External DNS is dead, so its orphaned records
-              # can be safely removed for this env (staging/dev only).
-              dns_cleanup
+              # All components gone — External DNS is dead, so its orphaned Route53
+              # records can be safely removed for this env (staging/dev only).
+              bash scripts/destroy-cleanup.sh dns "$TARGET_ENV" "$AWS_REGION"
               ;;
 
             *)  # plan
