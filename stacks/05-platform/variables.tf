@@ -23,6 +23,21 @@ variable "vpc_id" {
   type        = string
 }
 
+variable "cluster_endpoint" {
+  description = "EKS cluster API endpoint (Karpenter registers nodes against it)."
+  type        = string
+}
+
+variable "worker_role_name" {
+  description = "IAM role name of the EKS worker nodes (reused by Karpenter-launched nodes)."
+  type        = string
+}
+
+variable "private_subnet_ids" {
+  description = "Private subnet IDs where Karpenter launches nodes."
+  type        = list(string)
+}
+
 variable "eks_name_prefix" {
   description = "Display-name prefix for EKS resources."
   type        = string

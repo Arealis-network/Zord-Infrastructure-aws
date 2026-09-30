@@ -139,6 +139,33 @@ resource "random_password" "kafka_prompt_layer" {
   length  = 28
   special = false
 }
+# Conduktor Console: read-only Kafka user + admin login + in-cluster Postgres.
+# App grants the Kafka user Describe+Read only. All auto-generated (no CHANGE_ME).
+# Kafka SCRAM password goes into a JAAS string — keep it alphanumeric only
+# (no " \ : $) to avoid breaking the login module config. No UI complexity rule.
+resource "random_password" "conduktor_kafka" {
+  length  = 28
+  special = false
+}
+# Conduktor UI admin login requires upper+lower+number+special. Guarantee a
+# special char; override_special avoids $ : / @ " \ that break JSON/URLs/JAAS.
+resource "random_password" "conduktor_admin" {
+  length           = 24
+  min_upper        = 2
+  min_lower        = 2
+  min_numeric      = 2
+  min_special      = 2
+  override_special = "!#%*-_="
+}
+# Console's in-cluster Postgres password — same safe complexity.
+resource "random_password" "conduktor_db" {
+  length           = 24
+  min_upper        = 2
+  min_lower        = 2
+  min_numeric      = 2
+  min_special      = 2
+  override_special = "!#%*-_="
+}
 
 # ─────────────────────────────────────────
 # Shared Infrastructure Config (DB host, Kafka, etc.)
@@ -590,5 +617,32 @@ resource "aws_secretsmanager_secret_version" "kong_manager" {
   secret_string = jsonencode({
     KONG_MANAGER_USERNAME = "admin"
     KONG_MANAGER_PASSWORD = random_password.kong_manager.result
+  })
+}
+
+# ─────────────────────────────────────────
+# Conduktor Console (Kafka observability UI). App reads <env>/zord/conduktor-secrets
+# via an ExternalSecret. 3 auto-generated passwords + 2 non-secret values:
+#   CDK_ADMIN_*     -> Conduktor UI login
+#   CDK_DATABASE_*  -> Console's in-cluster Postgres creds
+#   KAFKA_CONDUKTOR_PASSWORD -> read-only Kafka user (chart grants Describe/Read only)
+# Covered by the existing ESO wildcard <env>/zord/*, so no new IAM is required.
+# ─────────────────────────────────────────
+
+resource "aws_secretsmanager_secret" "conduktor" {
+  name                    = "${var.environment}/zord/conduktor-secrets"
+  description             = "Conduktor Console credentials (auto-generated) for Arealis Zord (${var.environment})"
+  recovery_window_in_days = 0
+  tags                    = { Name = "${var.environment}/zord/conduktor-secrets" }
+}
+
+resource "aws_secretsmanager_secret_version" "conduktor" {
+  secret_id = aws_secretsmanager_secret.conduktor.id
+  secret_string = jsonencode({
+    CDK_ADMIN_EMAIL          = "admin@zordnet.com"
+    CDK_ADMIN_PASSWORD       = random_password.conduktor_admin.result
+    CDK_DATABASE_USERNAME    = "conduktor"
+    CDK_DATABASE_PASSWORD    = random_password.conduktor_db.result
+    KAFKA_CONDUKTOR_PASSWORD = random_password.conduktor_kafka.result
   })
 }

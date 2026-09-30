@@ -16,7 +16,7 @@
         "admin_cidrs": [
             "0.0.0.0/0"
         ],
-        "enable_flow_logs": true,
+        "enable_flow_logs": false,
         "flow_log_retention_days": 30
     },
     "dns": {
@@ -43,12 +43,33 @@
         "skip_final_snapshot": true
     },
     "cluster": {
-        "version": "1.32",
+        "version": "1.36",
         "manage_admin_access": true,
         "endpoint_public_access": true,
         "public_access_cidrs": [
             "0.0.0.0/0"
         ]
+    },
+    "node_groups": {
+        "stateful": {
+            "instance_types": [
+                "t3.xlarge"
+            ],
+            "min_size": 1,
+            "desired_size": 1,
+            "max_size": 3
+        },
+        "stateless": {
+            "instance_types": [
+                "t3.medium",
+                "t3.large",
+                "t3.xlarge",
+                "m5.large"
+            ],
+            "min_size": 1,
+            "desired_size": 2,
+            "max_size": 20
+        }
     },
     "platform": {
         "app_repo_url": "https://github.com/Arealis-network/Arealis-Zord-intent.git",
@@ -72,7 +93,8 @@
         "public_subdomains": [
             "api",
             "www",
-            "kong-admin"
+            "kong-admin",
+            "conduktor"
         ],
         "origin_subdomain": "origin-api",
         "waf_rate_limit": 2000,

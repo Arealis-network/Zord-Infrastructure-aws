@@ -59,6 +59,16 @@ module "compute" {
   public_access_cidrs               = local.config.cluster.public_access_cidrs
   ami_id                            = data.aws_ssm_parameter.ami.value
   account_id                        = data.aws_caller_identity.current.account_id
+
+  # Per-env node sizing (optional config.node_groups block; falls back to defaults).
+  stateful_instance_types  = try(local.config.node_groups.stateful.instance_types, ["t3.xlarge"])
+  stateful_min_size        = try(local.config.node_groups.stateful.min_size, 1)
+  stateful_desired_size    = try(local.config.node_groups.stateful.desired_size, 1)
+  stateful_max_size        = try(local.config.node_groups.stateful.max_size, 3)
+  stateless_instance_types = try(local.config.node_groups.stateless.instance_types, ["t3.large", "t3.xlarge", "m5.large"])
+  stateless_min_size       = try(local.config.node_groups.stateless.min_size, 1)
+  stateless_desired_size   = try(local.config.node_groups.stateless.desired_size, 4)
+  stateless_max_size       = try(local.config.node_groups.stateless.max_size, 20)
 }
 
 output "cluster_name" { value = module.compute.cluster_name }

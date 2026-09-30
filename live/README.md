@@ -4,6 +4,9 @@ This is the deployment surface. Each directory below is an independent Terraform
 root module with **its own state file**, so a change to one component can never
 accidentally modify another.
 
+> After an apply, verify every tool is installed/healthy from the bastion using
+> the copy-paste command runbook in [`docs/VERIFY.md`](../docs/VERIFY.md).
+
 ```
 live/
   <environment>/            dev | staging | production
@@ -11,7 +14,7 @@ live/
     02-data/                RDS Postgres, S3 buckets
     03-compute/             EKS cluster, node groups, EKS addons, bastion
     04-security/            IAM/Pod Identity, Secrets Manager, SES
-    05-platform/            Helm: ESO, LB controller, autoscaler, metrics,
+    05-platform/            Helm: ESO, LB controller, Karpenter, metrics,
                             EBS CSI, External DNS, Argo Rollouts, ArgoCD
     06-edge/                CloudFront + WAF
 ```

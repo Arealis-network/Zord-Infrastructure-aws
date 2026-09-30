@@ -5,7 +5,7 @@ Reusable Terraform composition for Kubernetes platform services on the Arealis Z
 ## Components
 
 - EBS CSI driver and default `gp3` StorageClass.
-- Cluster Autoscaler and Metrics Server.
+- Karpenter (just-in-time node provisioning) and Metrics Server.
 - AWS Load Balancer Controller and External DNS.
 - External Secrets Operator.
 - Argo Rollouts and Argo CD, including the configured application repository.

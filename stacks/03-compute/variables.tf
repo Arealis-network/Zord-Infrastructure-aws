@@ -28,6 +28,40 @@ variable "node_group_name" {
   type        = string
 }
 
+# Per-env node group sizing (elasticity / cost). Defaults preserve prior behavior.
+variable "stateful_instance_types" {
+  type    = list(string)
+  default = ["t3.xlarge"]
+}
+variable "stateful_min_size" {
+  type    = number
+  default = 1
+}
+variable "stateful_desired_size" {
+  type    = number
+  default = 1
+}
+variable "stateful_max_size" {
+  type    = number
+  default = 3
+}
+variable "stateless_instance_types" {
+  type    = list(string)
+  default = ["t3.large", "t3.xlarge", "m5.large"]
+}
+variable "stateless_min_size" {
+  type    = number
+  default = 1
+}
+variable "stateless_desired_size" {
+  type    = number
+  default = 4
+}
+variable "stateless_max_size" {
+  type    = number
+  default = 20
+}
+
 variable "cluster_version" {
   description = "Kubernetes version for the EKS cluster and node groups."
   type        = string

@@ -64,6 +64,9 @@ module "platform" {
   aws_region               = local.config.aws_region
   cluster_name             = local.config.cluster_name
   vpc_id                   = data.terraform_remote_state.foundation.outputs.vpc_id
+  cluster_endpoint         = data.terraform_remote_state.compute.outputs.cluster_endpoint
+  worker_role_name         = element(split("/", data.terraform_remote_state.compute.outputs.worker_role_arn), 1)
+  private_subnet_ids       = data.terraform_remote_state.foundation.outputs.private_subnet_ids
   eks_name_prefix          = local.config.eks_name_prefix
   eks_resource_prefix      = local.config.eks_resource_prefix
   node_groups_ready        = data.terraform_remote_state.compute.outputs.stateless_node_group_id
@@ -90,7 +93,7 @@ module "platform" {
 }
 
 output "ebs_csi_role_arn" { value = module.platform.ebs_csi_role_arn }
-output "cluster_autoscaler_role_arn" { value = module.platform.cluster_autoscaler_role_arn }
+output "karpenter_controller_role_arn" { value = module.platform.karpenter_controller_role_arn }
 output "external_secrets_role_arn" { value = module.platform.external_secrets_role_arn }
 output "argocd_url" { value = module.platform.argocd_url }
 output "argocd_credentials_secret_name" { value = module.platform.argocd_credentials_secret_name }

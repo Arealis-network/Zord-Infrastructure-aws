@@ -78,6 +78,13 @@ resource "helm_release" "external_secrets" {
   namespace        = var.namespace
   create_namespace = true
 
+  # On destroy the operator's webhook + CR finalizers can block `helm uninstall`
+  # until the 5m Helm timeout ("context deadline exceeded"). The null_resource
+  # below strips those finalizers first; these settings keep the uninstall itself
+  # from waiting on graceful pod/webhook teardown.
+  wait          = false
+  wait_for_jobs = false
+
   values = [yamlencode({
     installCRDs = true
     serviceAccount = {
@@ -92,11 +99,76 @@ resource "helm_release" "external_secrets" {
   ]
 }
 
+# Destroy-time safety net: before the ESO operator is uninstalled, strip
+# finalizers from all ESO custom resources and CRDs so nothing blocks teardown.
+# This resource depends_on the operator release, so on `terraform destroy` it is
+# destroyed FIRST (reverse dependency order) — running the cleanup while the
+# operator is still alive, right before its Helm uninstall. No-op on create/apply.
+resource "null_resource" "eso_finalizer_cleanup" {
+  triggers = {
+    cluster_name = var.cluster_name
+    aws_region   = var.aws_region
+    namespace    = var.namespace
+  }
 
-# Wait for the ESO CRDs to be established before creating the custom resource.
-resource "time_sleep" "wait_for_eso_crds" {
-  depends_on      = [helm_release.external_secrets]
-  create_duration = "45s"
+  depends_on = [helm_release.external_secrets]
+
+  provisioner "local-exec" {
+    when        = destroy
+    on_failure  = continue
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set +e
+      aws eks update-kubeconfig --name "${self.triggers.cluster_name}" --region "${self.triggers.aws_region}" >/dev/null 2>&1
+      # Strip finalizers from ESO custom resources so their deletion doesn't block.
+      for kind in clustersecretstores secretstores externalsecrets clusterexternalsecrets pushsecrets; do
+        for res in $(kubectl get "$kind" -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} {end}' 2>/dev/null); do
+          ns="$${res%/*}"; name="$${res#*/}"
+          kubectl patch "$kind" -n "$ns" "$name" --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null
+        done
+      done
+      # Drop the ESO CRDs so the namespace/release can finalize.
+      kubectl get crd 2>/dev/null | grep 'external-secrets.io' | awk '{print $1}' | xargs -r kubectl delete crd --wait=false 2>/dev/null
+      exit 0
+    EOT
+  }
+}
+
+
+# Wait for the ESO webhook to be READY before creating the ClusterSecretStore.
+# CRDs establish before the webhook pod is serving; creating the CR too early
+# fails with "no endpoints available for service external-secrets-webhook".
+# Because the operator release runs with wait=false (so destroy doesn't hang),
+# we can't rely on Helm's own wait — poll the webhook deployment here instead.
+resource "null_resource" "wait_for_eso_webhook" {
+  triggers = {
+    cluster_name = var.cluster_name
+    aws_region   = var.aws_region
+    namespace    = var.namespace
+    # re-run if the operator release changes (e.g. version bump)
+    release = helm_release.external_secrets.id
+  }
+
+  depends_on = [helm_release.external_secrets]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set +e
+      aws eks update-kubeconfig --name "${self.triggers.cluster_name}" --region "${self.triggers.aws_region}" >/dev/null 2>&1
+      NS="${self.triggers.namespace}"
+      # Wait until the webhook deployment is Available AND its Service has ready
+      # endpoints (that's what the admission call actually needs).
+      for i in $(seq 1 60); do
+        kubectl -n "$NS" rollout status deploy/external-secrets-webhook --timeout=10s >/dev/null 2>&1
+        eps=$(kubectl -n "$NS" get endpoints external-secrets-webhook -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)
+        if [ -n "$eps" ]; then echo "webhook ready: $eps"; exit 0; fi
+        echo "waiting for external-secrets-webhook endpoints... ($i)"; sleep 5
+      done
+      echo "WARNING: webhook not confirmed ready after ~5m; proceeding anyway"
+      exit 0
+    EOT
+  }
 }
 
 # IMPLEMENTATION NOTE — why helm_release and not kubernetes_manifest:
@@ -127,7 +199,7 @@ resource "helm_release" "cluster_secret_store" {
   recreate_pods = false
 
   depends_on = [
-    time_sleep.wait_for_eso_crds,
+    null_resource.wait_for_eso_webhook,
     aws_eks_pod_identity_association.external_secrets,
   ]
 }

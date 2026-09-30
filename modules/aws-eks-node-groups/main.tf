@@ -101,12 +101,12 @@ resource "aws_eks_node_group" "stateful" {
 
   subnet_ids = var.private_subnet_ids
 
-  instance_types = ["t3.xlarge"]
+  instance_types = var.stateful_instance_types
 
   scaling_config {
-    desired_size = 1
-    max_size     = 3
-    min_size     = 1
+    desired_size = var.stateful_desired_size
+    max_size     = var.stateful_max_size
+    min_size     = var.stateful_min_size
   }
 
   labels = {
@@ -190,13 +190,13 @@ resource "aws_eks_node_group" "stateless" {
 
   subnet_ids = var.private_subnet_ids
 
-  instance_types = ["t3.large", "t3.xlarge", "m5.large"]
+  instance_types = var.stateless_instance_types
   capacity_type  = "SPOT"
 
   scaling_config {
-    desired_size = 4
-    max_size     = 20
-    min_size     = 1
+    desired_size = var.stateless_desired_size
+    max_size     = var.stateless_max_size
+    min_size     = var.stateless_min_size
   }
 
   labels = {
@@ -220,7 +220,11 @@ resource "aws_eks_node_group" "stateless" {
 }
 
 # ─────────────────────────────────────────
-# ASG Tags
+# ASG Tags — just a Name for console readability. The old
+# k8s.io/cluster-autoscaler/* discovery tags were removed: node scaling is now
+# handled by Karpenter (which discovers subnets/SGs by the cluster tag, not ASGs).
+# These managed node groups act only as the stable "seed" home for the controllers
+# + stateful workloads; Karpenter provisions all elastic capacity.
 # ─────────────────────────────────────────
 
 resource "aws_autoscaling_group_tag" "stateful_instance_name" {
@@ -233,26 +237,6 @@ resource "aws_autoscaling_group_tag" "stateful_instance_name" {
   }
 }
 
-resource "aws_autoscaling_group_tag" "stateful_autoscaler_owned" {
-  autoscaling_group_name = aws_eks_node_group.stateful.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "k8s.io/cluster-autoscaler/${var.cluster_name}"
-    value               = "owned"
-    propagate_at_launch = false
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateful_autoscaler_enabled" {
-  autoscaling_group_name = aws_eks_node_group.stateful.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "k8s.io/cluster-autoscaler/enabled"
-    value               = "true"
-    propagate_at_launch = false
-  }
-}
-
 resource "aws_autoscaling_group_tag" "stateless_instance_name" {
   autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
 
@@ -260,25 +244,5 @@ resource "aws_autoscaling_group_tag" "stateless_instance_name" {
     key                 = "Name"
     value               = "${var.eks_name_prefix} stateless node"
     propagate_at_launch = true
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateless_autoscaler_owned" {
-  autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "k8s.io/cluster-autoscaler/${var.cluster_name}"
-    value               = "owned"
-    propagate_at_launch = false
-  }
-}
-
-resource "aws_autoscaling_group_tag" "stateless_autoscaler_enabled" {
-  autoscaling_group_name = aws_eks_node_group.stateless.resources[0].autoscaling_groups[0].name
-
-  tag {
-    key                 = "k8s.io/cluster-autoscaler/enabled"
-    value               = "true"
-    propagate_at_launch = false
   }
 }

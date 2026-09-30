@@ -367,8 +367,8 @@ else
 fi
 
 #----------------------------- Helm Repo -----------------------------
-
-helm repo add autoscaler https://kubernetes.github.io/autoscaler
+# Node autoscaling is Karpenter (OCI chart oci://public.ecr.aws/karpenter/karpenter),
+# managed by Terraform (05-platform) — no classic `helm repo add` needed.
 helm repo update
 
 #----------------------------- Done -----------------------------

@@ -1,6 +1,6 @@
-output "cluster_autoscaler_release_status" {
-  description = "Cluster Autoscaler Helm release status."
-  value       = module.cluster_autoscaler.release_status
+output "karpenter_release_status" {
+  description = "Karpenter Helm release status."
+  value       = module.karpenter.release_status
 }
 
 output "external_secrets_release_status" {
@@ -23,9 +23,9 @@ output "ebs_csi_role_arn" {
   value       = module.ebs_csi.role_arn
 }
 
-output "cluster_autoscaler_role_arn" {
-  description = "IAM role ARN used by Cluster Autoscaler."
-  value       = module.cluster_autoscaler.role_arn
+output "karpenter_controller_role_arn" {
+  description = "IAM role ARN used by the Karpenter controller."
+  value       = module.karpenter.controller_role_arn
 }
 
 output "external_secrets_role_arn" {
