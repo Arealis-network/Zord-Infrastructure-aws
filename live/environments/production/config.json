@@ -75,7 +75,7 @@
         "app_repo_url": "https://github.com/Arealis-network/Arealis-Zord-intent.git",
         "external_secrets_namespace": "external-secrets",
         "external_secrets_service_account": "external-secrets",
-        "application_mode": "legacy",
+        "application_mode": "helm",
         "target_revision": "prod",
         "values_environment": "prod",
         "application_name_suffix": "prod",
