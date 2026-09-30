@@ -43,7 +43,7 @@
         "skip_final_snapshot": true
     },
     "cluster": {
-        "version": "1.37",
+        "version": "1.36",
         "manage_admin_access": true,
         "endpoint_public_access": true,
         "public_access_cidrs": [

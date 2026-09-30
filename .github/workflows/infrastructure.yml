@@ -159,9 +159,11 @@ jobs:
                 # dead now, so it cannot recreate the ALB.
                 [[ "$c" == "05-platform" ]] && bash scripts/destroy-cleanup.sh sweep "$TARGET_ENV" "$AWS_REGION"
               done
-              # All components gone — External DNS is dead, so its orphaned Route53
-              # records can be safely removed for this env (staging/dev only).
+              # All components gone — clean up what Terraform doesn't own:
+              #  - orphaned Route53 records (staging/dev only; prod skipped)
+              #  - orphaned CloudWatch log groups (EKS + VPC flow logs, per-env)
               bash scripts/destroy-cleanup.sh dns "$TARGET_ENV" "$AWS_REGION"
+              bash scripts/destroy-cleanup.sh logs "$TARGET_ENV" "$AWS_REGION"
               ;;
 
             *)  # plan

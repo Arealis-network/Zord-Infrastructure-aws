@@ -3,7 +3,7 @@
 # destroy-cleanup.sh — best-effort cleanup of resources Terraform does NOT own,
 # so a `terraform destroy` of an environment completes and leaves no footprint.
 #
-# Two phases (K8s controllers create these OUTSIDE Terraform state):
+# Three phases (things created OUTSIDE Terraform state that a destroy leaves behind):
 #   sweep  — delete orphaned ALBs/NLBs + public-IP ENIs in the env's VPC.
 #            Run AFTER 05-platform (the LB controller) is destroyed, else the
 #            controller just recreates the ALB from the Ingress. Orphaned ALBs
@@ -13,12 +13,18 @@
 #            External DNS (grafana/jaeger/kibana ingresses). Run AFTER all
 #            components are destroyed. PRODUCTION IS SKIPPED (its records are
 #            un-prefixed apex names like api/www — too risky to auto-delete).
+#   logs   — delete the env's orphaned CloudWatch log groups. EKS auto-creates
+#            /aws/eks/<cluster>/cluster (never expires) and VPC flow logs create
+#            /aws/vpc/<vpc_prefix>/flow-logs; neither is deleted by terraform
+#            destroy, so they keep billing "vended log" storage forever.
+#            Scoped strictly to THIS env's cluster + vpc prefixes (safe for prod).
 #
 # NEVER aborts: every step is best-effort. A failure here must not fail destroy.
 #
 # Usage:
 #   destroy-cleanup.sh sweep <environment> <aws_region>
 #   destroy-cleanup.sh dns   <environment> <aws_region>
+#   destroy-cleanup.sh logs  <environment> <aws_region>
 # ─────────────────────────────────────────────────────────────────────────────
 set +e
 
@@ -28,7 +34,7 @@ REGION="${3:-ap-south-1}"
 CONFIG="live/environments/${ENVIRONMENT}/config.json"
 
 if [[ -z "$PHASE" || -z "$ENVIRONMENT" ]]; then
-  echo "usage: $0 <sweep|dns> <environment> [aws_region]" >&2
+  echo "usage: $0 <sweep|dns|logs> <environment> [aws_region]" >&2
   exit 0 # non-fatal
 fi
 if [[ ! -f "$CONFIG" ]]; then
@@ -128,10 +134,34 @@ dns() {
   echo "::endgroup::"
 }
 
+# ── phase: delete the env's orphaned CloudWatch log groups ──
+# EKS + VPC flow logs create these outside Terraform and destroy leaves them,
+# billing "vended log" storage forever. Delete ONLY the log groups whose names
+# match this env's cluster / VPC prefixes, so other envs are never touched.
+logs() {
+  local vpc_prefix eks_lg vpc_lg
+  vpc_prefix=$(jq -r .vpc_resource_prefix "$CONFIG")
+  eks_lg="/aws/eks/${cluster}/cluster"
+  vpc_lg="/aws/vpc/${vpc_prefix}/flow-logs"
+  echo "::group::CloudWatch log-group cleanup for $ENVIRONMENT"
+  for lg in "$eks_lg" "$vpc_lg"; do
+    # Confirm it exists (exact-name prefix match) before deleting.
+    if aws logs describe-log-groups --region "$REGION" --log-group-name-prefix "$lg" \
+         --query "logGroups[?logGroupName=='$lg'] | length(@)" --output text 2>/dev/null | grep -q '^1$'; then
+      aws logs delete-log-group --region "$REGION" --log-group-name "$lg" 2>/dev/null \
+        && echo "deleted log group $lg" || echo "could not delete $lg (non-fatal)"
+    else
+      echo "no log group $lg"
+    fi
+  done
+  echo "::endgroup::"
+}
+
 case "$PHASE" in
   sweep) sweep ;;
   dns)   dns ;;
-  *)     echo "unknown phase '$PHASE' (use sweep|dns)" >&2 ;;
+  logs)  logs ;;
+  *)     echo "unknown phase '$PHASE' (use sweep|dns|logs)" >&2 ;;
 esac
 
 exit 0
