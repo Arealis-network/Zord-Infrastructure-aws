@@ -32,13 +32,16 @@ module "ebs_csi" {
   pod_identity_addon_ready = var.pod_identity_addon_ready
 }
 
-module "cluster_autoscaler" {
-  source = "../../modules/helm-cluster-autoscaler"
+module "karpenter" {
+  source = "../../modules/helm-karpenter"
 
   cluster_name             = var.cluster_name
+  cluster_endpoint         = var.cluster_endpoint
   aws_region               = var.aws_region
   eks_name_prefix          = var.eks_name_prefix
   eks_resource_prefix      = var.eks_resource_prefix
+  worker_role_name         = var.worker_role_name
+  private_subnet_ids       = var.private_subnet_ids
   node_groups_ready        = var.node_groups_ready
   pod_identity_addon_ready = var.pod_identity_addon_ready
 }

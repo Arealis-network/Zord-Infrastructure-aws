@@ -62,7 +62,7 @@ Infra is split into six independently state-locked Terraform roots under
 | 02 | `02-data` | S3 buckets, RDS Postgres, evidence/token KMS keys, `db-connection` secret |
 | 03 | `03-compute` | EKS cluster, node groups, core addons, bastion |
 | 04 | `04-security` | Per-service IAM + Pod Identity, all service secrets, SES |
-| 05 | `05-platform` | EBS CSI, autoscaler, ALB controller, External DNS, ESO, Rollouts, ArgoCD + the 5 Application definitions |
+| 05 | `05-platform` | EBS CSI, Karpenter, ALB controller, External DNS, ESO, Rollouts, ArgoCD + the 5 Application definitions |
 | 06 | `06-edge` | CloudFront + WAF (origin = `api.<env_domain>`) |
 
 Apply runs 01→06. Destroy runs 06→01.
