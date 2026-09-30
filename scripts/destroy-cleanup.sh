@@ -202,6 +202,37 @@ ecr() {
   echo "::endgroup::"
 }
 
+# ── phase: remove a stale creator EKS access entry before apply ──
+# WHY: a cluster first created with bootstrap_cluster_creator_admin_permissions=true
+# gets an access entry AUTO-created by EKS for the creator role. Terraform also
+# manages that same admin entry (aws_eks_access_entry.cluster_admin), so on a
+# re-apply against such a cluster the create collides:
+#   409 ResourceInUseException: The specified access entry resource is already in use.
+# This deletes ONLY that one creator-role entry if it exists, so the apply can
+# create + own it cleanly. Idempotent and scoped to this env's cluster + the
+# caller (creator) role ARN. Best-effort: never fails the run.
+preapply() {
+  if ! aws eks describe-cluster --name "$cluster" --region "$REGION" >/dev/null 2>&1; then
+    echo "preapply: cluster $cluster not found (fresh build) — nothing to clean"; return 0
+  fi
+  local acct role_arn
+  acct=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
+  # The workflow runs under the assumed OIDC role; normalize to the plain IAM role ARN.
+  role_arn=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null \
+    | sed -E "s#^arn:aws:sts::([0-9]+):assumed-role/([^/]+)/.*#arn:aws:iam::\1:role/\2#")
+  echo "::group::EKS pre-apply access-entry cleanup for $cluster"
+  if aws eks describe-access-entry --cluster-name "$cluster" --principal-arn "$role_arn" \
+       --region "$REGION" >/dev/null 2>&1; then
+    aws eks delete-access-entry --cluster-name "$cluster" --principal-arn "$role_arn" \
+      --region "$REGION" 2>/dev/null \
+      && echo "removed stale creator access entry ($role_arn)" \
+      || echo "could not remove access entry (non-fatal)"
+  else
+    echo "no stale creator access entry for $role_arn — nothing to do"
+  fi
+  echo "::endgroup::"
+}
+
 # ── phase: force-delete any node groups still attached to the cluster ──
 # EKS blocks DeleteCluster while node groups exist. Terraform's depends_on handles
 # the normal order, but a drifted/half-deleted state can leave a node group behind
@@ -242,7 +273,8 @@ case "$PHASE" in
   logs)       logs ;;
   ecr)        ecr ;;
   nodegroups) nodegroups ;;
-  *)          echo "unknown phase '$PHASE' (use sweep|dns|logs|ecr|nodegroups)" >&2 ;;
+  preapply)   preapply ;;
+  *)          echo "unknown phase '$PHASE' (use sweep|dns|logs|ecr|nodegroups|preapply)" >&2 ;;
 esac
 
 exit 0

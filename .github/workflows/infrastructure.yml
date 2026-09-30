@@ -120,7 +120,12 @@ jobs:
 
           case "$ACTION" in
             apply)
+              chmod +x scripts/destroy-cleanup.sh || true
               for c in "${COMPS[@]}"; do
+                # Before compute: remove any stale creator access entry that EKS
+                # auto-created (bootstrap=true on a prior build) so Terraform can
+                # create + own the admin entry without a 409 collision.
+                [[ "$c" == "03-compute" ]] && bash scripts/destroy-cleanup.sh preapply "$TARGET_ENV" "$AWS_REGION"
                 echo "::group::apply $c"; init "$c"
                 terraform -chdir="live/components/$c" apply -auto-approve -no-color
                 echo "::endgroup::"
