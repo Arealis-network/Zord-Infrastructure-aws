@@ -38,9 +38,14 @@ variable "private_subnet_ids" {
 }
 
 variable "chart_version" {
-  description = "Pinned Karpenter Helm chart version."
+  description = <<-EOT
+    Pinned Karpenter Helm chart version. Must be a v1-API release (>= 1.0) since
+    the NodePool/EC2NodeClass templates use apiVersion v1 / karpenter.sh/v1.
+    1.6.x is a current stable line compatible with EKS 1.33-1.36. Karpenter is
+    NOT locked to a K8s version, but newer releases officially support newer EKS.
+  EOT
   type        = string
-  default     = "1.0.6"
+  default     = "1.6.2"
 }
 
 variable "instance_categories" {
