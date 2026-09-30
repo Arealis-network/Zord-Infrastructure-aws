@@ -83,8 +83,14 @@ resource "aws_eks_cluster" "eks" {
   enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
 
   access_config {
-    authentication_mode                         = "API_AND_CONFIG_MAP"
-    bootstrap_cluster_creator_admin_permissions = true
+    authentication_mode = "API_AND_CONFIG_MAP"
+    # false: EKS would otherwise auto-create an access entry for the creator role
+    # (the CI OIDC role). Since Terraform also manages an admin access entry for
+    # that SAME principal (admin_principal_arn == caller_role_arn), leaving this
+    # true caused a duplicate collision:
+    #   ResourceInUseException: The specified access entry resource is already in use.
+    # With false, Terraform is the single owner of the admin access entry.
+    bootstrap_cluster_creator_admin_permissions = false
   }
 
   # SEC C3: envelope-encrypt Kubernetes secrets in etcd with a customer KMS key.
