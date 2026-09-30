@@ -21,14 +21,22 @@
 #   ecr    — force-delete the env's ECR repos (Jenkins creates them on push, not
 #            Terraform). Scoped to env-prefixed repo names (<env>/, <env>-, stg-,
 #            dev-) so SHARED/unprefixed repos used by other envs are NEVER deleted.
+#   nodegroups — SAFETY NET. Deletes any EKS node group still attached to THIS
+#            env's cluster and waits until none remain, so the cluster can be
+#            deleted. EKS refuses "DeleteCluster" while node groups exist
+#            ("Cluster has nodegroups attached"). Terraform normally handles the
+#            order, but if state drifted (node group deleted in the console, or a
+#            prior failed run) this guarantees the 03-compute destroy won't block.
+#            Scoped strictly to this env's single cluster name — touches nothing else.
 #
 # NEVER aborts: every step is best-effort. A failure here must not fail destroy.
 #
 # Usage:
-#   destroy-cleanup.sh sweep <environment> <aws_region>
-#   destroy-cleanup.sh dns   <environment> <aws_region>
-#   destroy-cleanup.sh logs  <environment> <aws_region>
-#   destroy-cleanup.sh ecr   <environment> <aws_region>
+#   destroy-cleanup.sh sweep      <environment> <aws_region>
+#   destroy-cleanup.sh dns        <environment> <aws_region>
+#   destroy-cleanup.sh logs       <environment> <aws_region>
+#   destroy-cleanup.sh ecr        <environment> <aws_region>
+#   destroy-cleanup.sh nodegroups <environment> <aws_region>
 # ─────────────────────────────────────────────────────────────────────────────
 set +e
 
@@ -194,12 +202,47 @@ ecr() {
   echo "::endgroup::"
 }
 
+# ── phase: force-delete any node groups still attached to the cluster ──
+# EKS blocks DeleteCluster while node groups exist. Terraform's depends_on handles
+# the normal order, but a drifted/half-deleted state can leave a node group behind
+# and stall the destroy. This issues delete on every node group, then waits until
+# the cluster reports zero — best-effort, scoped to this env's cluster only.
+nodegroups() {
+  if ! aws eks describe-cluster --name "$cluster" --region "$REGION" >/dev/null 2>&1; then
+    echo "nodegroups: cluster $cluster not found — nothing to do"; return 0
+  fi
+  echo "::group::EKS node-group cleanup for $cluster"
+  # Issue delete on any node group that isn't already deleting.
+  for ng in $(aws eks list-nodegroups --cluster-name "$cluster" --region "$REGION" \
+    --query 'nodegroups[]' --output text 2>/dev/null); do
+    local status
+    status=$(aws eks describe-nodegroup --cluster-name "$cluster" --nodegroup-name "$ng" \
+      --region "$REGION" --query 'nodegroup.status' --output text 2>/dev/null)
+    if [[ "$status" != "DELETING" ]]; then
+      echo "deleting node group $ng (status=$status)"
+      aws eks delete-nodegroup --cluster-name "$cluster" --nodegroup-name "$ng" --region "$REGION" 2>/dev/null
+    else
+      echo "node group $ng already DELETING"
+    fi
+  done
+  # Wait (up to ~10m) for all node groups to disappear so the cluster is deletable.
+  for _ in $(seq 1 60); do
+    local left
+    left=$(aws eks list-nodegroups --cluster-name "$cluster" --region "$REGION" \
+      --query 'length(nodegroups)' --output text 2>/dev/null || echo 0)
+    [[ "$left" == "0" ]] && { echo "all node groups gone"; break; }
+    echo "waiting for $left node group(s) to delete..."; sleep 10
+  done
+  echo "::endgroup::"
+}
+
 case "$PHASE" in
-  sweep) sweep ;;
-  dns)   dns ;;
-  logs)  logs ;;
-  ecr)   ecr ;;
-  *)     echo "unknown phase '$PHASE' (use sweep|dns|logs|ecr)" >&2 ;;
+  sweep)      sweep ;;
+  dns)        dns ;;
+  logs)       logs ;;
+  ecr)        ecr ;;
+  nodegroups) nodegroups ;;
+  *)          echo "unknown phase '$PHASE' (use sweep|dns|logs|ecr|nodegroups)" >&2 ;;
 esac
 
 exit 0

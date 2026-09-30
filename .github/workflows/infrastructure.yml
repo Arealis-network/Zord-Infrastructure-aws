@@ -151,6 +151,10 @@ jobs:
               for ((i=${#COMPS[@]}-1; i>=0; i--)); do
                 c="${COMPS[$i]}"
                 has_state "$c" || { echo "skip $c (no state)"; continue; }
+                # Safety net: before tearing down compute, force-delete any node
+                # groups still attached to the cluster so EKS DeleteCluster can't
+                # block with "Cluster has nodegroups attached" on a drifted state.
+                [[ "$c" == "03-compute" ]] && bash scripts/destroy-cleanup.sh nodegroups "$TARGET_ENV" "$AWS_REGION"
                 echo "::group::destroy $c"; init "$c"
                 terraform -chdir="live/components/$c" destroy -auto-approve -no-color
                 echo "::endgroup::"
