@@ -200,6 +200,52 @@ jobs:
                 return 0
               }
 
+              # ── DNS cleanup: delete this env's orphaned Route53 records ──
+              # Observability ingresses (grafana/jaeger/kibana) publish records via
+              # External DNS — NOT Terraform. On destroy they orphan (point at a gone
+              # ALB). Delete every record for THIS env's prefix so a destroy leaves no
+              # DNS footprint. SAFETY: staging=stg-, dev=dev-. Production is SKIPPED
+              # (its records are un-prefixed apex names like api/www — too risky to
+              # auto-delete). Apex NS/SOA and ACM validation CNAMEs are never matched.
+              dns_cleanup() {
+                set +e
+                local pfx=""
+                [[ "$TARGET_ENV" == "staging" ]] && pfx="stg-"
+                [[ "$TARGET_ENV" == "dev" ]] && pfx="dev-"
+                if [[ -z "$pfx" ]]; then
+                  echo "dns_cleanup: skipping (env=$TARGET_ENV has no safe prefix)"; set -e; return 0
+                fi
+                local apex zid
+                apex=$(jq -r .dns.ses_domain "live/environments/$TARGET_ENV/config.json")
+                zid=$(aws route53 list-hosted-zones-by-name --dns-name "$apex" \
+                  --query 'HostedZones[0].Id' --output text 2>/dev/null | sed 's|/hostedzone/||')
+                if [[ -z "$zid" || "$zid" == "None" ]]; then
+                  echo "dns_cleanup: no hosted zone for $apex"; set -e; return 0
+                fi
+                echo "::group::DNS cleanup ($pfx*) in zone $apex"
+                # Build a single DELETE change-batch with jq: take every record whose
+                # Name starts with the env prefix, excluding NS/SOA (safety). jq emits
+                # the exact ResourceRecordSet objects Route53 returned, so the DELETE
+                # matches precisely (TTL, alias, values all preserved).
+                aws route53 list-resource-record-sets --hosted-zone-id "$zid" --output json 2>/dev/null \
+                  | jq --arg p "$pfx" '{Changes: [ .ResourceRecordSets[]
+                      | select(.Name | startswith($p))
+                      | select(.Type != "NS" and .Type != "SOA")
+                      | {Action: "DELETE", ResourceRecordSet: .} ]}' > /tmp/dns_del.json
+                local n
+                n=$(jq '.Changes | length' /tmp/dns_del.json 2>/dev/null || echo 0)
+                if [[ "$n" -gt 0 ]]; then
+                  aws route53 change-resource-record-sets --hosted-zone-id "$zid" \
+                    --change-batch file:///tmp/dns_del.json 2>/dev/null \
+                    && echo "deleted $n $pfx records" || echo "DNS delete failed (non-fatal)"
+                else
+                  echo "no $pfx records to delete"
+                fi
+                echo "::endgroup::"
+                set -e
+                return 0
+              }
+
               for ((i=${#COMPS[@]}-1; i>=0; i--)); do
                 c="${COMPS[$i]}"
                 has_state "$c" || { echo "skip $c (no state)"; continue; }
@@ -211,6 +257,9 @@ jobs:
                 # dead now, so it cannot recreate the ALB.
                 [[ "$c" == "05-platform" ]] && aws_sweep
               done
+              # All components gone — External DNS is dead, so its orphaned records
+              # can be safely removed for this env (staging/dev only).
+              dns_cleanup
               ;;
 
             *)  # plan
