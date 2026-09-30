@@ -80,7 +80,7 @@
         "values_environment": "prod",
         "application_name_suffix": "prod",
         "applications_auto_sync": false,
-        "observability_auto_sync_on_apply": false
+        "observability_auto_sync_on_apply": true
     },
     "ses": {
         "manage_domain_identity": true,
