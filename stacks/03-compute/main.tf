@@ -30,6 +30,15 @@ module "node_groups" {
   stateless_min_size       = var.stateless_min_size
   stateless_desired_size   = var.stateless_desired_size
   stateless_max_size       = var.stateless_max_size
+
+  # Explicit dependency on the whole cluster module (not just the name string).
+  # WHY: node groups reference the cluster only by its NAME (a stable string that
+  # survives a cluster replacement). Without this, on any cluster replace Terraform
+  # thinks the node groups are independent and tries to DELETE THE CLUSTER FIRST,
+  # which EKS rejects with "Cluster has nodegroups attached" (the #98 failure).
+  # With this depends_on, Terraform tears the node groups down BEFORE the cluster
+  # and, on a version upgrade, updates the control plane BEFORE the node groups.
+  depends_on = [module.eks]
 }
 
 module "addons" {

@@ -115,6 +115,16 @@ resource "aws_eks_cluster" "eks" {
   }
 
   depends_on = [aws_iam_role_policy_attachment.cluster_policy]
+
+  lifecycle {
+    # bootstrap_cluster_creator_admin_permissions is a create-only field: it only
+    # takes effect at cluster creation. On an EXISTING cluster, changing it does
+    # nothing useful but can trigger a full cluster REPLACE (the #98 failure).
+    # Ignoring it means: new clusters get the value above; existing clusters are
+    # never replaced just because this toggle changed. Version upgrades and other
+    # in-place changes still apply normally.
+    ignore_changes = [access_config[0].bootstrap_cluster_creator_admin_permissions]
+  }
 }
 
 # ─────────────────────────────────────────
