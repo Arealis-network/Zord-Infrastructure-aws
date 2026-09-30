@@ -20,7 +20,7 @@ variable "environment" {
 variable "cluster_version" {
   description = "Kubernetes version for the EKS cluster and node group."
   type        = string
-  default     = "1.32"
+  default     = "1.33"
 }
 
 variable "aws_region" {
