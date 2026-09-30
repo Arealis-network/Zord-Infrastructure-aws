@@ -16,7 +16,7 @@
         "admin_cidrs": [
             "0.0.0.0/0"
         ],
-        "enable_flow_logs": true,
+        "enable_flow_logs": false,
         "flow_log_retention_days": 30
     },
     "dns": {
@@ -49,6 +49,27 @@
         "public_access_cidrs": [
             "0.0.0.0/0"
         ]
+    },
+    "node_groups": {
+        "stateful": {
+            "instance_types": [
+                "t3.xlarge"
+            ],
+            "min_size": 1,
+            "desired_size": 1,
+            "max_size": 3
+        },
+        "stateless": {
+            "instance_types": [
+                "t3.medium",
+                "t3.large",
+                "t3.xlarge",
+                "m5.large"
+            ],
+            "min_size": 1,
+            "desired_size": 2,
+            "max_size": 20
+        }
     },
     "platform": {
         "app_repo_url": "https://github.com/Arealis-network/Arealis-Zord-intent.git",

@@ -21,6 +21,15 @@ module "node_groups" {
   eks_name_prefix     = var.eks_name_prefix
   eks_resource_prefix = var.eks_resource_prefix
   node_group_name     = var.node_group_name
+
+  stateful_instance_types  = var.stateful_instance_types
+  stateful_min_size        = var.stateful_min_size
+  stateful_desired_size    = var.stateful_desired_size
+  stateful_max_size        = var.stateful_max_size
+  stateless_instance_types = var.stateless_instance_types
+  stateless_min_size       = var.stateless_min_size
+  stateless_desired_size   = var.stateless_desired_size
+  stateless_max_size       = var.stateless_max_size
 }
 
 module "addons" {
