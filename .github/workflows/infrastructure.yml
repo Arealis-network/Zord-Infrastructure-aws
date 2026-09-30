@@ -164,6 +164,7 @@ jobs:
               #  - orphaned CloudWatch log groups (EKS + VPC flow logs, per-env)
               bash scripts/destroy-cleanup.sh dns "$TARGET_ENV" "$AWS_REGION"
               bash scripts/destroy-cleanup.sh logs "$TARGET_ENV" "$AWS_REGION"
+              bash scripts/destroy-cleanup.sh ecr "$TARGET_ENV" "$AWS_REGION"
               ;;
 
             *)  # plan

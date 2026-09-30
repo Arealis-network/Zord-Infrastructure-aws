@@ -18,6 +18,9 @@
 #            /aws/vpc/<vpc_prefix>/flow-logs; neither is deleted by terraform
 #            destroy, so they keep billing "vended log" storage forever.
 #            Scoped strictly to THIS env's cluster + vpc prefixes (safe for prod).
+#   ecr    — force-delete the env's ECR repos (Jenkins creates them on push, not
+#            Terraform). Scoped to env-prefixed repo names (<env>/, <env>-, stg-,
+#            dev-) so SHARED/unprefixed repos used by other envs are NEVER deleted.
 #
 # NEVER aborts: every step is best-effort. A failure here must not fail destroy.
 #
@@ -25,6 +28,7 @@
 #   destroy-cleanup.sh sweep <environment> <aws_region>
 #   destroy-cleanup.sh dns   <environment> <aws_region>
 #   destroy-cleanup.sh logs  <environment> <aws_region>
+#   destroy-cleanup.sh ecr   <environment> <aws_region>
 # ─────────────────────────────────────────────────────────────────────────────
 set +e
 
@@ -34,7 +38,7 @@ REGION="${3:-ap-south-1}"
 CONFIG="live/environments/${ENVIRONMENT}/config.json"
 
 if [[ -z "$PHASE" || -z "$ENVIRONMENT" ]]; then
-  echo "usage: $0 <sweep|dns|logs> <environment> [aws_region]" >&2
+  echo "usage: $0 <sweep|dns|logs|ecr> <environment> [aws_region]" >&2
   exit 0 # non-fatal
 fi
 if [[ ! -f "$CONFIG" ]]; then
@@ -162,11 +166,40 @@ logs() {
   echo "::endgroup::"
 }
 
+# ── phase: force-delete the env's ECR repositories (images and all) ──
+# Jenkins creates ECR repos on push (ecr:CreateRepository) — they are NOT in
+# Terraform state, so destroy leaves them. This deletes ONLY repos whose name is
+# scoped to THIS env, so shared repos used by other envs are never touched:
+#   <env>/...   e.g. staging/zord-edge
+#   <env>-...   e.g. staging-zord-edge
+#   stg-... / dev-...   short-prefix variants
+# If your repos are shared/unprefixed, NOTHING matches (safe — other envs keep
+# their images). --force removes the repo even if it still holds images.
+ecr() {
+  # Repos are per-environment (confirmed — no repo is shared across envs). Match the
+  # env token ANYWHERE in the repo name (prefix/middle/suffix) so all naming styles
+  # are caught: staging/zord-edge, staging-zord-edge, zord-edge-staging, stg-*, etc.
+  # Guard so "production" (contains "prod") never matches a staging/dev sweep and
+  # vice-versa — each env only matches its own full + short token.
+  local short
+  short=$(case "$ENVIRONMENT" in production) echo prod ;; staging) echo stg ;; dev) echo dev ;; *) echo "" ;; esac)
+  echo "::group::ECR cleanup for $ENVIRONMENT"
+  for repo in $(aws ecr describe-repositories --region "$REGION" \
+    --query 'repositories[].repositoryName' --output text 2>/dev/null); do
+    if echo "$repo" | grep -Eq "(^|[/_-])(${ENVIRONMENT}|${short})([/_-]|$)"; then
+      aws ecr delete-repository --region "$REGION" --repository-name "$repo" --force 2>/dev/null \
+        && echo "deleted ECR repo $repo" || echo "could not delete $repo (non-fatal)"
+    fi
+  done
+  echo "::endgroup::"
+}
+
 case "$PHASE" in
   sweep) sweep ;;
   dns)   dns ;;
   logs)  logs ;;
-  *)     echo "unknown phase '$PHASE' (use sweep|dns|logs)" >&2 ;;
+  ecr)   ecr ;;
+  *)     echo "unknown phase '$PHASE' (use sweep|dns|logs|ecr)" >&2 ;;
 esac
 
 exit 0
