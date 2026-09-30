@@ -116,11 +116,16 @@ dns() {
     echo "dns: no hosted zone for $apex"; return 0
   fi
   echo "::group::DNS cleanup ($pfx*) in zone $apex"
-  # jq emits the exact ResourceRecordSet objects Route53 returned (TTL/alias/values
-  # preserved), excluding NS/SOA, as a DELETE change-batch.
+  # Match the env label ($pfx = stg-/dev-) either at the START of the name
+  # (stg-grafana.zordnet.com) OR right after an External-DNS type prefix
+  # (aaaa-stg-grafana., cname-stg-grafana., txt-stg-grafana., a-stg-...). Those
+  # ownership TXT records are why plain startswith() missed them. Regex: the label
+  # is preceded by the start of string or a '-'. Excludes NS/SOA. Prod ($pfx empty)
+  # never reaches here. jq emits the exact ResourceRecordSet objects (TTL/alias
+  # preserved) as a DELETE change-batch.
   aws route53 list-resource-record-sets --hosted-zone-id "$zid" --output json 2>/dev/null \
     | jq --arg p "$pfx" '{Changes: [ .ResourceRecordSets[]
-        | select(.Name | startswith($p))
+        | select(.Name | test("(^|-)" + $p))
         | select(.Type != "NS" and .Type != "SOA")
         | {Action: "DELETE", ResourceRecordSet: .} ]}' > /tmp/dns_del.json
   n=$(jq '.Changes | length' /tmp/dns_del.json 2>/dev/null || echo 0)
