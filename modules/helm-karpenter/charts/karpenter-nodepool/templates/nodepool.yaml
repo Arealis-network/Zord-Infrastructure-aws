@@ -18,6 +18,10 @@ spec:
     - tags:
         kubernetes.io/cluster/{{ .Values.clusterName }}: owned
   tags:
+    # Friendly console name for Karpenter-launched nodes (otherwise they show as
+    # the raw ip-10-x-x hostname). Managed node groups get their Name from the
+    # launch template; Karpenter nodes get it from these EC2NodeClass tags.
+    Name: {{ printf "%s karpenter stateless node" .Values.clusterName | quote }}
     karpenter.sh/discovery: {{ .Values.clusterName | quote }}
     ManagedBy: karpenter
 ---
