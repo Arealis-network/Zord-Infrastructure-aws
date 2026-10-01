@@ -79,8 +79,15 @@ resource "aws_eks_cluster" "eks" {
   role_arn = aws_iam_role.cluster_role.arn
   version  = var.cluster_version
 
-  # SEC C2: full control-plane audit logging (PCI-DSS/SOC2 requirement).
-  enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+  # Control-plane logging DISABLED to avoid CloudWatch cost. Empty list = EKS
+  # ships NO logs and creates NO /aws/eks/<cluster>/cluster log group (the
+  # APS3-VendedLog-Bytes charge behind the earlier ~$100/mo bill).
+  #
+  # TO RE-ENABLE LATER: comment the `= []` line and uncomment ONE below.
+  # Prefer only "audit" (cheap). All five is what caused the $100 bill.
+  # enabled_cluster_log_types = ["audit"]
+  # enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+  enabled_cluster_log_types = []
 
   access_config {
     authentication_mode = "API_AND_CONFIG_MAP"
