@@ -56,9 +56,15 @@ variable "instance_categories" {
 }
 
 variable "instance_sizes" {
-  description = "Instance sizes Karpenter may launch. Small idle, larger on load."
+  description = <<-EOT
+    Instance sizes Karpenter may launch. Floor is "large" (8 GiB): "medium"
+    families are only 4 GiB and get memory-overcommitted by the platform pods
+    (ArgoCD, ESO, LB controller, Kong, fluentd DaemonSet, etc.), which left
+    DaemonSet pods stuck Pending with "Too many pods / no allocatable memory".
+    Starting at large avoids that while still consolidating down when idle.
+  EOT
   type        = list(string)
-  default     = ["medium", "large", "xlarge", "2xlarge"]
+  default     = ["large", "xlarge", "2xlarge"]
 }
 
 variable "capacity_types" {
