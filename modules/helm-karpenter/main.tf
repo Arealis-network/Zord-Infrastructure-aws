@@ -71,6 +71,24 @@ resource "aws_iam_role_policy" "karpenter_controller" {
         Resource = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.worker_role_name}"
       },
       {
+        # Karpenter v1 manages the EC2 instance profile for the nodes it launches.
+        # Without these, the EC2NodeClass stays "not ready" and the NodePool never
+        # becomes ready -> Karpenter logs "no nodepools found" and provisions nothing,
+        # leaving pods Pending. (403 AccessDenied on GetInstanceProfile/ListInstanceProfiles.)
+        Sid    = "InstanceProfile"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateInstanceProfile",
+          "iam:GetInstanceProfile",
+          "iam:ListInstanceProfiles",
+          "iam:TagInstanceProfile",
+          "iam:AddRoleToInstanceProfile",
+          "iam:RemoveRoleFromInstanceProfile",
+          "iam:DeleteInstanceProfile"
+        ]
+        Resource = "*"
+      },
+      {
         Sid      = "EKSDescribe"
         Effect   = "Allow"
         Action   = ["eks:DescribeCluster"]
