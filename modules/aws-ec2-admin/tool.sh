@@ -262,13 +262,13 @@ RUN apt-get update \
         python3-pip \
     && pip3 install --break-system-packages pytest \
     && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && curl -fsSL https://go.dev/dl/go1.22.5.linux-amd64.tar.gz | tar -C /usr/local -xzf - \
+    && curl -fsSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xzf - \
     && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
     && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
     && curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin \
-    && curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v1.59.1 \
+    && curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.11.4 \
     && curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash \
     && curl -fsSLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
     && install -m 0755 kubectl /usr/local/bin/kubectl \
