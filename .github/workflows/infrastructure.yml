@@ -155,6 +155,13 @@ jobs:
 
               for ((i=${#COMPS[@]}-1; i>=0; i--)); do
                 c="${COMPS[$i]}"
+                # ALWAYS sweep right before the VPC (01-foundation) is torn down,
+                # even if upstream components have no state. By now the EKS cluster
+                # + all Karpenter nodes are gone, so this terminates any leftover
+                # Karpenter instance and deletes every ENI in the VPC — otherwise a
+                # stray ENI blocks subnet deletion with DependencyViolation (#106).
+                # Placed BEFORE the has_state guard so it runs regardless of state.
+                [[ "$c" == "01-foundation" ]] && bash scripts/destroy-cleanup.sh sweep "$TARGET_ENV" "$AWS_REGION"
                 has_state "$c" || { echo "skip $c (no state)"; continue; }
                 # Safety net: before tearing down compute, force-delete any node
                 # groups still attached to the cluster so EKS DeleteCluster can't
@@ -167,13 +174,6 @@ jobs:
                 # ALBs/ENIs so 01-foundation (VPC) can be torn down. The controller is
                 # dead now, so it cannot recreate the ALB.
                 [[ "$c" == "05-platform" ]] && bash scripts/destroy-cleanup.sh sweep "$TARGET_ENV" "$AWS_REGION"
-                # Sweep AGAIN right before the VPC (01-foundation) is destroyed:
-                # by now the EKS cluster + all Karpenter nodes are gone, so this
-                # catches any leftover Karpenter instance/ENI that would otherwise
-                # block subnet deletion with DependencyViolation (the #106 failure).
-                if [[ "$c" == "02-data" ]]; then
-                  bash scripts/destroy-cleanup.sh sweep "$TARGET_ENV" "$AWS_REGION"
-                fi
               done
               # All components gone — clean up what Terraform doesn't own:
               #  - orphaned Route53 records (staging/dev only; prod skipped)
