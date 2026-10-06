@@ -202,9 +202,36 @@ resource "time_sleep" "wait_for_karpenter_crds" {
 }
 
 # ─────────────────────────────────────────
-# NodePool + EC2NodeClass — the "small when idle, right-size on load" policy.
-# Delivered as a tiny local Helm chart so it renders at APPLY time (CRDs exist
-# by then), and adopts/updates an existing object instead of failing.
+
+resource "null_resource" "karpenter_finalizer_cleanup" {
+  triggers = {
+    cluster_name = var.cluster_name
+    aws_region   = var.aws_region
+  }
+
+  # Create AFTER the nodepool release so that on DESTROY (reverse order) this
+  # cleanup provisioner runs BEFORE the release is uninstalled.
+  depends_on = [helm_release.karpenter_nodepool]
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set +e
+      aws eks update-kubeconfig --name "${self.triggers.cluster_name}" --region "${self.triggers.aws_region}" >/dev/null 2>&1
+      # Delete NodeClaims (terminates Karpenter-owned EC2) so nodes drain first.
+      kubectl delete nodeclaims --all --wait=false 2>/dev/null
+      # Strip finalizers so the CRs can be removed even if the controller is gone.
+      for kind in nodepools.karpenter.sh ec2nodeclasses.karpenter.k8s.aws nodeclaims.karpenter.sh; do
+        for res in $(kubectl get "$kind" -o name 2>/dev/null); do
+          kubectl patch "$res" --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null
+        done
+      done
+      exit 0
+    EOT
+  }
+}
+
+
 # ─────────────────────────────────────────
 
 resource "helm_release" "karpenter_nodepool" {
