@@ -103,11 +103,35 @@ sweep() {
     sleep 5
     aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$eni" 2>/dev/null
   done
-  # 5. delete remaining available ENIs so subnets can be removed
-  for eni in $(aws ec2 describe-network-interfaces --region "$REGION" \
-    --filters "Name=vpc-id,Values=$vpc" "Name=status,Values=available" \
-    --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null); do
-    aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$eni" 2>/dev/null
+  # 5. terminate any leftover EC2 instances in the VPC (Karpenter-launched nodes
+  #    whose ENIs block subnet deletion with DependencyViolation — the #106
+  #    failure). Karpenter nodes aren't in Terraform state, so destroy never
+  #    removes them; their ENIs keep the private subnet alive.
+  local insts
+  insts=$(aws ec2 describe-instances --region "$REGION" \
+    --filters "Name=vpc-id,Values=$vpc" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+    --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null)
+  if [[ -n "$insts" ]]; then
+    echo "terminating leftover instances: $insts"
+    aws ec2 terminate-instances --region "$REGION" --instance-ids $insts 2>/dev/null
+    aws ec2 wait instance-terminated --region "$REGION" --instance-ids $insts 2>/dev/null
+  fi
+  # 6. force-detach + delete EVERY remaining ENI in the VPC (available OR in-use),
+  #    so no leftover interface blocks the subnet/VPC teardown.
+  for _ in $(seq 1 12); do
+    local remaining
+    remaining=$(aws ec2 describe-network-interfaces --region "$REGION" \
+      --filters "Name=vpc-id,Values=$vpc" \
+      --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null)
+    [[ -z "$remaining" ]] && break
+    for eni in $remaining; do
+      local att
+      att=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$eni" \
+        --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text 2>/dev/null)
+      [[ "$att" != "None" && -n "$att" ]] && aws ec2 detach-network-interface --region "$REGION" --attachment-id "$att" --force 2>/dev/null
+      aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$eni" 2>/dev/null
+    done
+    sleep 10
   done
   echo "::endgroup::"
 }

@@ -167,6 +167,13 @@ jobs:
                 # ALBs/ENIs so 01-foundation (VPC) can be torn down. The controller is
                 # dead now, so it cannot recreate the ALB.
                 [[ "$c" == "05-platform" ]] && bash scripts/destroy-cleanup.sh sweep "$TARGET_ENV" "$AWS_REGION"
+                # Sweep AGAIN right before the VPC (01-foundation) is destroyed:
+                # by now the EKS cluster + all Karpenter nodes are gone, so this
+                # catches any leftover Karpenter instance/ENI that would otherwise
+                # block subnet deletion with DependencyViolation (the #106 failure).
+                if [[ "$c" == "02-data" ]]; then
+                  bash scripts/destroy-cleanup.sh sweep "$TARGET_ENV" "$AWS_REGION"
+                fi
               done
               # All components gone — clean up what Terraform doesn't own:
               #  - orphaned Route53 records (staging/dev only; prod skipped)
